@@ -168,9 +168,10 @@ then
 ### This still needs to check for PETSC_ARCH
   if test "$with_petsc" != "yes"
   then
-    PETSC="$with_petsc"
+    PETSC_DIR="$with_petsc"
+    
   else
-    AC_CHECK_FILE($PETSC_DIR/$PETSC_ARCH/conf, PETSC="include \$(PETSC_DIR)/conf/variables",
+    AC_CHECK_FILE($PETSC_DIR/$PETSC_ARCH/conf, ,
     echo "Error - can't find PETSc distribution"
     exit)
   fi
@@ -251,6 +252,7 @@ MFILE
     echo "***********************************"
     CXXFLAGS="$CXXFLAGS -DBOUT_HAS_PETSC -DBOUT_HAS_PETSC_DEV"
   fi
+  PETSC="include \$(PETSC_DIR)/conf/variables"
 else
    PETSC=
 fi
@@ -497,6 +499,7 @@ then
     EXTRA_LIBS="$EXTRA_LIBS $CVODELIBS"
     EXTRA_INCS="$EXTRA_INCS $CVODEINCS"
     CXXFLAGS="$CXXFLAGS -DBOUT_HAS_CVODE"
+    
   fi
 fi
 
@@ -1082,6 +1085,82 @@ AC_OPENMP
 # Add the flag to both compile and link stages
 CXXFLAGS="$CXXFLAGS $OPENMP_CXXFLAGS"
 EXTRA_LIBS="$EXTRA_LIBS $OPENMP_CXXFLAGS"
+
+#############################################################
+# Check types for SUNDIALS
+#############################################################
+
+if test "$CVODELIBS" != ""
+then
+  echo "checking CVODE types..." | tee -a config-build.log
+  
+  cat > test_cvode_compile.cxx <<MYEOF
+    #include <cvode/cvode_bbdpre.h>
+
+    #include <stdlib.h>
+
+    static int cvode_bbd_rhs(CVODEINT Nlocal,
+                   double, N_Vector u, N_Vector du,
+                   void *user_data);
+
+    int main() {
+      CVBBDPrecInit(NULL, 0, 0, 0,
+                  0, 0, 0, cvode_bbd_rhs, NULL);
+      exit (0);
+    }
+MYEOF
+
+  # Try to compile
+  echo "Trying to compile test_cvode_compile.cxx" >> config-build.log
+  
+  $CXX -c test_cvode_compile.cxx $CVODEINCS -DCVODEINT=int  >> config-build.log 2>&1
+  
+  # Check return value
+  if test "$?" = "0"
+  then
+    CVODEINT=int
+  else
+    CVODEINT=long
+  fi
+  echo "  CVODE BBD uses '$CVODEINT' type" | tee -a config-build.log
+  
+  CXXFLAGS="$CXXFLAGS -DCVODEINT=$CVODEINT"
+fi
+
+if test "$IDALIBS" != ""
+then
+  echo "checking IDA types..." | tee -a config-build.log
+  
+  cat > test_ida_compile.cxx <<MYEOF
+    #include <ida/ida_bbdpre.h>
+
+    #include <stdlib.h>
+    static int ida_bbd_res(IDAINT Nlocal, double, 
+		       N_Vector u, N_Vector du, N_Vector rr, void *user_data);
+
+    int main() {
+      IDABBDPrecInit(NULL, 0, 0, 0, 0, 0, 
+			 0, ida_bbd_res, NULL);
+      exit (0);
+    }
+MYEOF
+
+  # Try to compile
+  echo "Trying to compile test_ida_compile.cxx" >> config-build.log
+  
+  $CXX -c test_ida_compile.cxx $IDAINCS -DIDAINT=int  >> config-build.log 2>&1
+  
+  # Check return value
+  if test "$?" = "0"
+  then
+    IDAINT=int
+  else
+    IDAINT=long
+  fi
+  echo "  IDA BBD uses '$CVODEINT' type" | tee -a config-build.log
+  
+  CXXFLAGS="$CXXFLAGS -DIDAINT=$IDAINT"
+fi
 
 #############################################################
 # Download + Build PVODE '98

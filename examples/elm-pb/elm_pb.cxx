@@ -19,26 +19,32 @@
 
 #include <math.h>
 
-//xia:       rf waves
-BoutReal Prf; // power of rf waves 
-Field2D Frf, Prf_h; // force of rf waves and the normalized power
-BoutReal n_par; // parallel refractive index of rf
-BoutReal rf_width_x,rf_width_y,rf_x,rf_y; // the width and the center coordinate of Gaussian rf waves 
-
-
-
 // 2D inital profiles
-Field2D  J0, P0; // Current and pressure
+Field2D J0, P0; // Current and pressure
 Vector2D b0xcv; // Curvature term
 Field2D beta, gradparB;   // Used for Vpar terms
 Field2D phi0;   // When diamagnetic terms used
+Field2D U0, Psixy, x;   //0th vorticity of equilibrium flow, 
+                       //radial flux coordinate, normalized radial flux coordinate
+
+bool constn0;
+BoutReal n0_height, n0_ave, n0_width, n0_center, n0_bottom_x, Nbar, Tibar, Tebar; //the total height, average width and center of profile of N0
+BoutReal Tconst; //the ampitude of congstant temperature
+//Field3D sourp;
+
+Field2D N0,Ti0,Te0,Ne0;  // number density and temperature
+Field2D Pi0, Pe0;
+Field2D q95;
+Field3D ubyn;
+BoutReal q95_input;
+bool n0_fake_prof, T0_fake_prof;
+BoutReal Zi; // charge number of ion
 
 // B field vectors
 Vector2D B0vec; // B0 field vector
 
 // V0 field vectors
-Vector2D V0vec; // V0 field vector in convection
-Vector2D V0eff; // effective V0 field vector in Ohm's law
+Vector2D V0net; //net flow 
 
 // 3D evolving variables
 Field3D U, Psi, P, Vpar;
@@ -47,6 +53,10 @@ Field3D U, Psi, P, Vpar;
 Field3D Jpar, phi; // Parallel current, electric potential
 
 Field3D Jpar2; //  Delp2 of Parallel current
+
+Field3D tmpP2; // Grad2_par2new of pressure
+Field3D tmpU2; // Grad2_par2new of Parallel vorticity
+Field3D tmpA2; // Grad2_par2new of Parallel vector potential
 
 // Constraint
 Field3D C_phi;
@@ -57,14 +67,13 @@ BoutReal Bbar, Lbar, Tbar, Va; // Normalisation constants
 BoutReal dnorm; // For diamagnetic terms: 1 / (2. * wci * Tbar)
 BoutReal dia_fact; // Multiply diamagnetic term by this
 BoutReal delta_i; // Normalized ion skin depth
+BoutReal omega_i; // ion gyrofrequency 
+
+BoutReal diffusion_p4;   //xqx: parallel hyper-viscous diffusion for pressure
+BoutReal diffusion_u4;   //xqx: parallel hyper-viscous diffusion for vorticity
+BoutReal diffusion_a4;   //xqx: parallel hyper-viscous diffusion for vector potential
 
 BoutReal diffusion_par;  // Parallel pressure diffusion
-BoutReal diffusion_Vpar;  //xia: Parallel velocitye diffusion
-BoutReal diffusion_psiP;  //xia: Parallel magnetic flux diffusion
-BoutReal diffusion_p4;   //M: 4th Parallel pressure diffusion
-BoutReal diffusion_v4;   //M: 4th Parallel velocitye diffusion
-BoutReal diffusion_U4;  //xia: 4th order Parall vorticity diffusion
-
 BoutReal heating_P;  // heating power in pressure
 BoutReal hp_width;  // heating profile radial width in pressure
 BoutReal hp_length;  // heating radial domain in pressure
@@ -85,9 +94,14 @@ BoutReal viscos_perp; // Perpendicular viscosity
 BoutReal hyperviscos; // Hyper-viscosity (radial)
 Field3D hyper_mu_x; // Hyper-viscosity coefficient
 
+Field3D Dperp2Phi0, Dperp2Phi, GradPhi02, GradPhi2; //Temporary variables for gyroviscous
+Field3D GradparPhi02, GradparPhi2, GradcPhi, GradcparPhi;
+Field3D Dperp2Pi0, Dperp2Pi, bracketPhi0P, bracketPhiP0, bracketPhiP;
+BoutReal Upara2;
+
 // options
 bool include_curvature, include_jpar0, compress0;
-bool evolve_pressure;
+bool evolve_pressure, gyroviscous;
 
 BoutReal vacuum_pressure;
 BoutReal vacuum_trans; // Transition width
@@ -99,6 +113,26 @@ bool evolve_jpar;
 BoutReal g; // Only if compressible
 bool phi_curv;
 
+// Poisson brackets: b0 x Grad(f) dot Grad(g) / B = [f, g]
+// Method to use: BRACKET_ARAKAWA, BRACKET_STD or BRACKET_SIMPLE      
+/*
+ * Bracket method 
+ *
+ * BRACKET_STD      - Same as b0xGrad_dot_Grad, methods in BOUT.inp
+ * BRACKET_SIMPLE   - Subset of terms, used in BOUT-06
+ * BRACKET_ARAKAWA  - Arakawa central differencing (2nd order)
+ * BRACKET_CTU      - 1st order upwind method
+ *
+ */
+
+// Bracket method for advection terms 
+BRACKET_METHOD bm_exb;
+BRACKET_METHOD bm_mag;
+int bm_exb_flag;
+int bm_mag_flag;
+/* BRACKET_METHOD bm_ExB = BRACKET_STD;
+   BRACKET_METHOD bm_mflutter = BRACKET_STD; */
+
 bool diamag;
 bool diamag_grad_t; // Grad_par(Te) term in Psi equation
 bool diamag_phi0;   // Include the diamagnetic equilibrium phi0
@@ -106,8 +140,21 @@ bool diamag_phi0;   // Include the diamagnetic equilibrium phi0
 bool eHall;
 BoutReal AA; // ion mass in units of the proton mass; AA=Mi/Mp
 
-BoutReal Vt0; // equilibrium toroidal flow normalized to Alfven velocity
-BoutReal Vp0; // equilibrium poloidal flow normalized to Alfven velocity
+//net flow, Er=-R*Bp*Dphi0,Dphi0=-D_min-0.5*D_0*(1.0-tanh(D_s*(x-x0)))
+Field2D V0; //net flow amplitude
+Field2D Dphi0; //differential potential to flux
+BoutReal D_0;   // potential amplitude
+BoutReal D_s;   // shear parameter
+BoutReal x0;   //velocity peak location
+BoutReal sign; //direction of flow
+BoutReal Psiaxis, Psibndry;  
+bool withflow; 
+bool K_H_term; //Kelvin-Holmhotz term
+Field2D perp;     //for test    
+BoutReal D_min; //constant in flow
+
+//for C_mod
+bool experiment_Er;  //read in total Er from experiment
 
 bool nogradparj;
 bool filter_z;
@@ -128,12 +175,6 @@ bool parallel_lr_diff; // Use left and right shifted stencils for parallel diffe
 
 bool parallel_lagrange; // Use (semi-) Lagrangian method for parallel derivatives
 bool parallel_project;  // Use Apar to project field-lines
-
-bool psi_inner_ideal, psi_outer_ideal; // Apply ideal MHD conditions to psi (through dpsi/dt)
-
-
-//********************
-
 
 Field3D Xip_x, Xip_z;     // Displacement of y+1 (in cell index space)
 
@@ -178,8 +219,7 @@ const BoutReal Mi = 2.0*1.6726e-27; // Ion mass
 // Communication objects
 FieldGroup comms;
 
-int precon(BoutReal t, BoutReal cj, BoutReal delta);
-
+int precon(BoutReal t, BoutReal cj, BoutReal delta); // Preconditioner
 int jacobian(BoutReal t); // Jacobian-vector multiply
 
 int precon_phi(BoutReal t, BoutReal cj, BoutReal delta); // Preconditioner with phi constraint
@@ -188,11 +228,67 @@ void advect_tracer(const Field3D &p,  // phi (input)
 		   const Field3D &delta_x, const Field3D &delta_z, // Current location (input) 
 		   Field3D &F_dx, Field3D &F_dz); // Time-derivative of location
 
-const Field2D rfpower_exp(BoutReal rf_width_x, BoutReal rf_width_y, BoutReal rf_x,  BoutReal rf_y);
-//xia: inital normalized profile of rf power with Gaussian form
-
 const Field3D Grad2_par2new(const Field3D &f); //for 4th order diffusion
 
+const Field2D N0tanh(BoutReal n0_height, BoutReal n0_ave, BoutReal n0_width, BoutReal n0_center, BoutReal n0_bottom_x);
+
+const Field2D N0tanh(BoutReal n0_height, BoutReal n0_ave, BoutReal n0_width, BoutReal n0_center, BoutReal n0_bottom_x)
+{
+  Field2D result;
+  result.allocate();
+
+  BoutReal Grid_NX, Grid_NXlimit;    //the grid number on x, and the 
+  BoutReal Jysep;
+  mesh->get(Grid_NX, "nx");
+  mesh->get(Jysep, "jyseps1_1");
+  Grid_NXlimit = n0_bottom_x * Grid_NX; 
+  output.write("Jysep1_1 = %i   Grid number = %e\n", int(Jysep), Grid_NX);
+  
+  if (Jysep > 0.) //for single null geometry
+    {
+      BoutReal Jxsep, Jysep2;
+      mesh->get(Jxsep, "ixseps1");
+      mesh->get(Jysep2, "jyseps2_2");
+      //output.write("Jysep2_2 = %i   Ixsep1 = %i\n", int(Jysep2), int(Jxsep));
+
+      for(int jx=0;jx<mesh->ngx;jx++)
+	{
+	  BoutReal mgx = mesh->GlobalX(jx);
+	  BoutReal xgrid_num = (Jxsep+1.)/Grid_NX;
+	  //output.write("mgx = %e xgrid_num = %e\n", mgx);
+	  for (int jy=0;jy<mesh->ngy;jy++)
+	    {
+	      int globaly = mesh->YGLOBAL(jy);
+	      //output.write("local y = %i;   global y: %i\n", jy, globaly);
+	      if ( mgx > xgrid_num || (globaly<=int(Jysep)-4) || (globaly>int(Jysep2)) )
+		mgx = xgrid_num;
+	      BoutReal rlx = mgx - n0_center;
+	      BoutReal temp = exp(rlx/n0_width);
+	      BoutReal dampr = ((temp - 1.0 / temp) / (temp + 1.0 / temp));
+	      result[jx][jy] = 0.5*(1.0 - dampr) * n0_height + n0_ave;  
+	    }
+	}
+    }
+  else //circular geometry
+    {
+      for(int jx=0;jx<mesh->ngx;jx++)
+	{
+	  BoutReal mgx = mesh->GlobalX(jx);
+	  BoutReal xgrid_num = Grid_NXlimit/Grid_NX;
+	  if (mgx > xgrid_num)
+	    mgx = xgrid_num;
+	  BoutReal rlx = mgx - n0_center;
+	  BoutReal temp = exp(rlx/n0_width);
+	  BoutReal dampr = ((temp - 1.0 / temp) / (temp + 1.0 / temp));
+	  for(int jy=0;jy<mesh->ngy;jy++)
+	    result[jx][jy] = 0.5*(1.0 - dampr) * n0_height + n0_ave;  
+	}
+    }
+  
+  mesh->communicate(result);
+
+  return result;
+}
 
 const Field3D Grad2_par2new(const Field3D &f)
 {
@@ -219,44 +315,6 @@ const Field3D Grad2_par2new(const Field3D &f)
   return result;
 }
 
-const Field2D rfpower_exp(BoutReal rf_width_x, BoutReal rf_width_y, BoutReal rf_x,  BoutReal rf_y)
-{
-  Field2D result;
-  result.allocate();
-
-  if(rf_y < 0.0 ){
-    for(int jx=0;jx<mesh->ngx;++jx)
-      for(int jy=0;jy<mesh->ngy;++jy)
-	//      for(int jz=0;jz<mesh->ngz;jz++)
-	{
-	  BoutReal lx = mesh->GlobalX(jx) - rf_x;
-	  //BoutReal ly = mesh->GlobalX(jy) - rf_y;
-	  //	BoutReal lz = mesh->GlobalX(jz) - rf_z;
-	  //	BoutReal dampl = exp(-(lx*lx+ly*ly)/(rf_width*rf_width));
-	  BoutReal dampl = exp(-(lx*lx)/(rf_width_x*rf_width_x));
-	  result[jx][jy] = dampl/(sqrt(PI)*rf_width_x*rf_x+rf_width_x*rf_width_x*(1.0-1.0/2.71828)/2.0);
-	}
-  }
-  else {
-    for(int jx=0;jx<mesh->ngx;++jx)
-      for(int jy=0;jy<mesh->ngy;++jy)
-	//      for(int jz=0;jz<mesh->ngz;jz++)
-	{
-	  BoutReal lx = mesh->GlobalX(jx) - rf_x;
-	  BoutReal ly = mesh->GlobalY(jy) - rf_y;
-	  //	BoutReal lz = mesh->GlobalX(jz) - rf_z;
-	  BoutReal dampl = exp(-(lx*lx)/(rf_width_x*rf_width_x)-(ly*ly)/(rf_width_y*rf_width_y));
-	  //BoutReal dampl = exp(-(lx*lx)/(rf_width*rf_width));
-	  result[jx][jy] = dampl/(PI*rf_width_x*rf_width_x*rf_x+sqrt(PI)*rf_width_x*rf_width_x*rf_width_y*(1.0-1.0/2.71828)/2.0);
-	}
-  }
-
-  mesh->communicate(result);
-
-  return result;
-}
-
-
 int physics_init(bool restarting)
 {
   bool noshear;
@@ -271,7 +329,7 @@ int physics_init(bool restarting)
   // Load 2D profiles
   mesh->get(J0, "Jpar0");    // A / m^2
   mesh->get(P0, "pressure"); // Pascals
-  
+
   // Load curvature term
   b0xcv.covariant = false; // Read contravariant components
   mesh->get(b0xcv, "bxcv"); // mixed units x: T y: m^-2 z: m^-2
@@ -289,6 +347,9 @@ int physics_init(bool restarting)
   mesh->get(B0,   "Bxy");  // T
   mesh->get(hthe, "hthe"); // m
   mesh->get(I,    "sinty");// m^-2 T^-1
+  mesh->get(Psixy, "psixy");//get Psi             
+  mesh->get(Psiaxis,"psi_axis");//axis flux      
+  mesh->get(Psibndry,"psi_bndry");//edge flux   
 
   //////////////////////////////////////////////////////////////
   // Read parameters from the options file
@@ -302,23 +363,19 @@ int physics_init(bool restarting)
   // Prints out what values are assigned
   /////////////////////////////////////////////////////////////
 
-  //  options.setSection("highbeta");    // The section header for all these settings
-
   Options *globalOptions = Options::getRoot();
   Options *options = globalOptions->getSection("highbeta");
 
-  // xia: rf waves input
-  OPTION(options, Prf,               0);      // Input rf power
-  OPTION(options, n_par,             0);      // the parallel refractive index
-  OPTION(options, rf_width_x,           0.1);    // the width of rf waves of x
-  OPTION(options, rf_width_y,           0.1);    // the width of rf waves of y
-  OPTION(options, rf_x,              0.8);   // The center of rf injection
-  OPTION(options, rf_y,              -1.);
+  OPTION(options, constn0,    true);
+  OPTION(options, n0_fake_prof,    false);   //use the hyperbolic profile of n0. If both  n0_fake_prof and T0_fake_prof are false, use the profiles from grid file 
+  OPTION(options, n0_height,         0.4);   //the total height of profile of N0, in percentage of Ni_x
+  OPTION(options, n0_ave,           0.01);   //the center or average of N0, in percentage of Ni_x
+  OPTION(options, n0_width,          0.1);   //the width of the gradient of N0,in percentage of x
+  OPTION(options, n0_center,       0.633);   //the grid number of the center of N0, in percentage of x
+  OPTION(options, n0_bottom_x,      0.81);  //the start of flat region of N0 on SOL side, in percentage of x 
+  OPTION(options, T0_fake_prof,    false); 
+  OPTION(options, Tconst,           -1.0);   //the amplitude of constant temperature, in percentage
 
-  BoutReal scaleP;
-  OPTION(options, scaleP,            1.0);  // Multiply P0 by a number
-  P0 *= scaleP;              // NOTE: Not self consistent with B field
-  
   OPTION(options, density,           1.0e19); // Number density [m^-3]
 
   OPTION(options, evolve_jpar,       false);  // If true, evolve J raher than Psi
@@ -330,7 +387,64 @@ int physics_init(bool restarting)
   OPTION(options, evolve_pressure,   true);
   
   OPTION(options, compress0,          false);
+  OPTION(options, gyroviscous,       false);
   OPTION(options, nonlinear,         false);
+
+  // option for ExB Poisson Bracket 
+  OPTION(options, bm_exb_flag,         0);
+  switch(bm_exb_flag) {
+  case 0: {
+    bm_exb = BRACKET_STD;
+    output << "\tBrackets for ExB: default differencing\n";
+    break;
+  }
+  case 1: {
+    bm_exb = BRACKET_SIMPLE;
+    output << "\tBrackets for ExB: simplified operator\n";
+    break;
+  }
+  case 2: {
+    bm_exb = BRACKET_ARAKAWA;
+    output << "\tBrackets for ExB: Arakawa scheme\n";
+    break;
+  }
+  case 3: {
+    bm_exb = BRACKET_CTU;
+    output << "\tBrackets for ExB: Corner Transport Upwind method\n";
+    break;
+  }
+  default:
+    output << "ERROR: Invalid choice of bracket method. Must be 0 - 3\n";
+    return 1;
+  }
+
+  // option for magnetic flutter Poisson Bracket
+  OPTION(options, bm_mag_flag,         0);
+  switch(bm_mag_flag) {
+  case 0: {
+    bm_mag = BRACKET_STD;
+    output << "\tBrackets: default differencing\n";
+    break;
+  }
+  case 1: {
+    bm_mag = BRACKET_SIMPLE;
+    output << "\tBrackets: simplified operator\n";
+    break;
+  }
+  case 2: {
+    bm_mag = BRACKET_ARAKAWA;
+    output << "\tBrackets: Arakawa scheme\n";
+    break;
+  }
+  case 3: {
+    bm_mag = BRACKET_CTU;
+    output << "\tBrackets: Corner Transport Upwind method\n";
+    break;
+  }
+  default:
+    output << "ERROR: Invalid choice of bracket method. Must be 0 - 3\n";
+    return 1;
+  }
 
   OPTION(options, eHall,            false);  // electron Hall or electron parallel pressue gradient effects? 
   OPTION(options, AA,               1.0);    // ion mass in units of proton mass
@@ -339,9 +453,16 @@ int physics_init(bool restarting)
   OPTION(options, diamag_grad_t,     diamag); // Grad_par(Te) term in Psi equation
   OPTION(options, diamag_phi0,       diamag); // Include equilibrium phi0
   OPTION(options, dia_fact,          1.0);    // Scale diamagnetic effects by this factor
+  
+  OPTION(options, withflow,          false);    //withflow or not 
+  OPTION(options, K_H_term,          true);    //keep K-H term 
+  OPTION(options, D_0,                0.0);    // velocity magnitude  
+  OPTION(options, D_s,                0.0);    // flowshear    
+  OPTION(options, x0,                 0.0);    //flow location   
+  OPTION(options, sign,               1.0);    //flow direction, -1 means negative electric field   
+  OPTION(options, D_min,           3000.0);    //a constant   
 
-  OPTION(options, Vt0,          0.0);    // equilibrium toroidal flow normalized to Alfven velocity
-  OPTION(options, Vp0,          0.0);    // equilibrium poloidal flow normalized to Alfven velocity
+  OPTION(options, experiment_Er,     false);
 
   OPTION(options, noshear,           false);
 
@@ -399,12 +520,9 @@ int physics_init(bool restarting)
   
   // parallel pressure diffusion
   OPTION(options, diffusion_par,        -1.0);  // Parallel pressure diffusion
-  OPTION(options, diffusion_Vpar,        -1.0);  //xia: Parallel velocity diffusion
-  OPTION(options, diffusion_psiP,        -1.0);  //xia: Parallel magnetic flux diffusion
-  OPTION(options, diffusion_p4,        -1.0);  // M: 4th Parallel pressure diffusion
-  OPTION(options, diffusion_v4,        -1.0);  //M: 4th Parallel velocity diffusion
-  OPTION(options, diffusion_U4,        -1.0);  //M: 4th Parallel vorticity diffusion
-
+  OPTION(options, diffusion_p4,        -1.0);   //xqx: parallel hyper-viscous diffusion for pressure
+  OPTION(options, diffusion_u4,        -1.0);   //xqx: parallel hyper-viscous diffusion for vorticity
+  OPTION(options, diffusion_a4,        -1.0);   //xqx: parallel hyper-viscous diffusion for vector potential
 
   // heating factor in pressure
   OPTION(options, heating_P,        -1.0);  //  heating power in pressure
@@ -416,9 +534,6 @@ int physics_init(bool restarting)
   OPTION(options, sp_width,         0.05);  //  the percentage of radial grid points for sink profile radial width in pressure
   OPTION(options, sp_length,        0.04);  //  the percentage of radial grid points for sink profile radial domain in pressure
 
-  OPTION(options, psi_inner_ideal, false);
-  OPTION(options, psi_outer_ideal, false);
-  
 
   // left edge sink factor in vorticity
   OPTION(options, sink_Ul,           -1.0);  //  left edge sink in vorticity
@@ -438,6 +553,21 @@ int physics_init(bool restarting)
   OPTION(options, phi_flags,         0);
   OPTION(options, apar_flags,        0);
 
+  x=(Psixy-Psiaxis)/(Psibndry-Psiaxis);     
+ 
+  if(experiment_Er){          //get er from experiment
+    mesh->get(Dphi0,"Epsi");  
+    diamag_phi0=false;
+    K_H_term=false;
+  } else {
+    Dphi0=-D_min-0.5*D_0*(1.0-tanh(D_s*(x-x0)));
+  }
+
+  if(sign<0)                //change flow direction
+    Dphi0*=-1;    
+
+  V0=-Rxy*Bpxy*Dphi0/B0;      
+ 
   if(simple_rmp)
     include_rmp = true;
 
@@ -457,8 +587,7 @@ int physics_init(bool restarting)
 	OPTION(options, rmp_polpeak, 0.5);
 	// Divide n by the size of the domain
         int zperiod;
-	//     options->get(NULL, "zperiod", zperiod, 1);
-	options->get("zperiod", zperiod, 1);
+        globalOptions->get("zperiod", zperiod, 1);
 	if((rmp_n % zperiod) != 0)
 	  output.write("     ***WARNING: rmp_n (%d) not a multiple of zperiod (%d)\n", rmp_n, zperiod);
 
@@ -549,6 +678,14 @@ int physics_init(bool restarting)
   output.write("                dnorm = %e\n", dnorm);
   output.write("    Resistivity\n");
 
+  if(gyroviscous)
+    {
+      omega_i = 9.58e7*Zeff*Bbar;
+      Upara2 = 0.5/(Tbar*omega_i);
+      //Upara3 = 1.0;
+      output.write("Upara2 = %e     Omega_i = %e\n", Upara2, omega_i);
+    }
+
   if(eHall)
     output.write("                delta_i = %e   AA = %e \n", delta_i, AA);
 
@@ -589,35 +726,22 @@ int physics_init(bool restarting)
     dump.add(diffusion_par, "diffusion_par", 1);
   }
 
-  //M: 4th order diffusion of p
+  //xqx: parallel hyper-viscous diffusion for pressure
   if(diffusion_p4 > 0.0) {
     output.write("    diffusion_p4: %e\n", diffusion_p4);
     dump.add(diffusion_p4, "diffusion_p4", 1);
   }
 
-  // xia: add the parallel velocity
-  if(diffusion_Vpar > 0.0) {
-    output.write("    diffusion_Vpar: %e\n", diffusion_Vpar);
-    dump.add(diffusion_Vpar, "diffusion_Vpar", 1);
+  //xqx: parallel hyper-viscous diffusion for vorticity
+  if(diffusion_u4 > 0.0) {
+    output.write("    diffusion_u4: %e\n", diffusion_u4);
+    dump.add(diffusion_u4, "diffusion_u4", 1);
   }
 
-  // M: 4th order parallel velocity diffusion
-  if(diffusion_v4 > 0.0) {
-    output.write("    diffusion_v4: %e\n", diffusion_v4);
-    dump.add(diffusion_v4, "diffusion_v4", 1);
-  }
-
-  // xia: 4th order vorticity diffusion
-  if(diffusion_U4 > 0.0) {
-    output.write("    diffusion_U4: %e\n", diffusion_U4);
-    dump.add(diffusion_v4, "diffusion_U4", 1);
-  }
-
-
-  // xia: add the magnetic flux diffusion
-  if(diffusion_psiP > 0.0) {
-    output.write("    diffusion_psiP: %e\n", diffusion_psiP);
-    dump.add(diffusion_psiP, "diffusion_psiP", 1);
+  //xqx: parallel hyper-viscous diffusion for vector potential
+  if(diffusion_a4 > 0.0) {
+    output.write("    diffusion_a4: %e\n", diffusion_a4);
+    dump.add(diffusion_a4, "diffusion_a4", 1);
   }
 
   if(heating_P > 0.0) {
@@ -642,41 +766,19 @@ int physics_init(bool restarting)
     dump.add(sp_length, "sp_length", 1);
   }
 
-  //xia:  rf initial
-  if(Prf>0.0)
-    {
-      output.write("    rf_power(Watts): %e\n ", Prf);
-      dump.add(Prf, "Pinput", 1);
-
-      output.write("    n_parallel: %e\n ", n_par);
-      dump.add(n_par, "n_par", 1);
-
-      output.write("    rf_width_x(%): %e\n ", rf_width_x);
-      dump.add(rf_width_x, "rf_width_x", 1);
-
-      output.write("    rf_width_y(%): %e\n ", rf_width_y);
-      dump.add(rf_width_y, "rf_width_y", 1);
-
-      output.write("    rf_x(%): %e\n ", rf_x);
-      dump.add(rf_x, "rf_x", 1);
-
-      output.write("    rf_y(%): %e\n ", rf_y);
-      dump.add(rf_y, "rf_y", 1);
-
-      Prf_h = Prf*rfpower_exp(rf_width_x, rf_width_y, rf_x, rf_y)* 2.*MU0*Tbar/(Bbar*Bbar);
-      dump.add(Prf_h, "Prf", 1);
-      Frf = Lbar/Tbar *2.*Prf_h *n_par/Va;
-      dump.add(Frf, "Frf", 1);
-
-    }
-
+  if(K_H_term)                      
+    output.write("    keep K-H term\n");
+  else
+    output.write("   drop K-H term\n"); 
 
   Field2D Te;
   Te = P0 / (2.0*density * 1.602e-19); // Temperature in eV
 
-  J0 = - MU0*Lbar * J0 / B0;
+  J0 = - MU0*Lbar * J0 / B0;           
   P0 = 2.0*MU0 * P0 / (Bbar*Bbar);
-
+  V0=V0/Va;        
+  Dphi0*=Tbar;     
+ 
   b0xcv.x /= Bbar;
   b0xcv.y *= Lbar*Lbar;
   b0xcv.z *= Lbar*Lbar;
@@ -688,7 +790,80 @@ int physics_init(bool restarting)
   hthe /= Lbar;
   mesh->dx   /= Lbar*Lbar*Bbar;
   I    *= Lbar*Lbar*Bbar;
-  
+
+  if (constn0)
+    {
+      T0_fake_prof = false;
+      n0_fake_prof = false;
+    }
+  else
+    {
+        Nbar = 1.0;
+	Tibar=1000.0;
+	Tebar=1000.0;
+
+      if( (!T0_fake_prof) && n0_fake_prof )
+	{
+	  N0 = N0tanh(n0_height*Nbar, n0_ave*Nbar, n0_width, n0_center, n0_bottom_x);
+
+	  Ti0 = P0/N0/2.0;
+	  Te0 = Ti0;
+	}
+      else if (T0_fake_prof)
+	{
+	  Ti0 = Tconst;
+	  Te0 = Ti0;
+	  N0 = P0/(Ti0+Te0);
+	}
+      else
+	{
+	  if(mesh->get(N0,  "Niexp")) { // N_i0                                          
+	    output.write("Error: Cannot read Ni0 from grid\n");
+	    return 1;
+	  } 
+	  
+	  if(mesh->get(Ti0,  "Tiexp")) { // T_i0                                         
+	    output.write("Error: Cannot read Ti0 from grid\n");
+	    return 1;
+	  }
+
+	  if(mesh->get(Te0,  "Teexp")) { // T_e0  
+	    output.write("Error: Cannot read Te0 from grid\n");
+	    return 1;
+	  }
+	  N0 /= Nbar;
+	  Ti0 /= Tibar;
+	  Te0 /= Tebar;
+	}
+    }
+
+  if (gyroviscous)
+    {
+      Dperp2Phi0.setLocation(CELL_CENTRE);
+      Dperp2Phi0.setBoundary("phi");
+      Dperp2Phi.setLocation(CELL_CENTRE);
+      Dperp2Phi.setBoundary("phi");
+      GradPhi02.setLocation(CELL_CENTRE);
+      GradPhi02.setBoundary("phi");
+      GradcPhi.setLocation(CELL_CENTRE);
+      GradcPhi.setBoundary("phi");
+      Dperp2Pi0.setLocation(CELL_CENTRE);
+      Dperp2Pi0.setBoundary("P");
+      Dperp2Pi.setLocation(CELL_CENTRE);
+      Dperp2Pi.setBoundary("P");
+      bracketPhi0P.setLocation(CELL_CENTRE);
+      bracketPhi0P.setBoundary("P");
+      bracketPhiP0.setLocation(CELL_CENTRE);
+      bracketPhiP0.setBoundary("P");
+      if (nonlinear)
+	{
+	  GradPhi2.setLocation(CELL_CENTRE);
+	  GradPhi2.setBoundary("phi");
+	  bracketPhiP.setLocation(CELL_CENTRE);
+	  bracketPhiP.setBoundary("P");
+	}
+    }
+
   BoutReal pnorm = max(P0, true); // Maximum over all processors
   
   vacuum_pressure *= pnorm; // Get pressure from fraction
@@ -775,20 +950,13 @@ int physics_init(bool restarting)
   B0vec.x = 0.;
   B0vec.y = Bpxy / hthe;
   B0vec.z = 0.;
-
-  // Set V0vec field vector
   
-  V0vec.covariant = false;
-  V0vec.x = 0.;
-  V0vec.y = Vp0 / hthe;
-  V0vec.z = Vt0 / Rxy;
+  V0net.covariant = false;                              //presentation for net flow
+  V0net.x = 0.;
+  V0net.y = Rxy*Btxy*Bpxy/(hthe*B0*B0)*Dphi0;
+  V0net.z = -Dphi0;
 
-  // Set V0eff field vector
-
-  V0eff.covariant = false;
-  V0eff.x = 0.;
-  V0eff.y = -(Btxy/(B0*B0))*(Vp0*Btxy-Vt0*Bpxy) / hthe;
-  V0eff.z =  (Bpxy/(B0*B0))*(Vp0*Btxy-Vt0*Bpxy) / Rxy;
+  U0=B0vec*Curl(V0net)/B0;     //get 0th vorticity for Kelvin-Holmholtz term
 
   /**************** SET VARIABLE LOCATIONS *************/
 
@@ -798,6 +966,7 @@ int physics_init(bool restarting)
   Psi.setLocation(CELL_YLOW);
   Jpar.setLocation(CELL_YLOW);
   Vpar.setLocation(CELL_YLOW);
+  //sourp.setLocation(CELL_CENTRE);
 
   /**************** SET EVOLVING VARIABLES *************/
 
@@ -861,52 +1030,80 @@ int physics_init(bool restarting)
     // Phi solved in RHS (explicitly)
     dump.add(phi, "phi", 1);
 
-    // Set Jacobian
-    solver->setJacobian(jacobian);
-    
     // Set preconditioner
     solver->setPrecon(precon);
+
+    // Set Jacobian
+    solver->setJacobian(jacobian);
   }
 
   // Diamagnetic phi0
-  if(diamag && diamag_phi0) {
+  if(diamag_phi0) {
+    if (constn0)
+      phi0 = -0.5*dnorm*P0/B0;
+    else
     // Stationary equilibrium plasma. ExB velocity balances diamagnetic drift
-    phi0 = -0.5*dnorm*P0/B0;
+      phi0 = -0.5*dnorm*P0/B0/N0;
     SAVE_ONCE(phi0);
   }
-
+  
+ 
   // Add some equilibrium quantities and normalisations
   // everything needed to recover physical units
   SAVE_ONCE2(J0, P0);
   SAVE_ONCE4(density, Lbar, Bbar, Tbar);
   SAVE_ONCE2(Va, B0);
-
+  SAVE_ONCE2(Dphi0, U0); 
+  SAVE_ONCE(V0);  
+  if (!constn0)
+    SAVE_ONCE3(Ti0, Te0, N0);     
+  
   /////////////// CHECK VACUUM ///////////////////////
   // In vacuum region, initial vorticity should equal zero
   
+  //ubyn.setLocation(CELL_YLOW);
+  //ubyn.setBoundary("U");
+
   if(!restarting) {
     // Only if not restarting: Check initial perturbation
 
     // Set U to zero where P0 < vacuum_pressure
     U = where(P0 - vacuum_pressure, U, 0.0);
 
-    // Phi should be consistent with U
-    phi = invert_laplace(U, phi_flags, NULL);
+    if (constn0)
+      {
+	ubyn = U;
+	// Phi should be consistent with U
+	phi = invert_laplace(ubyn, phi_flags, NULL);
+      }
+    else
+      {
+	ubyn = U/N0;
+	//dump.add(ubyn, "ubyn", 1);
+	//dump.add(sourp, "sourp", 1);
+	phi = invert_laplace(ubyn, phi_flags, NULL, &N0, NULL);
+      }
     
-    if(diamag) {
-      phi -= 0.5*dnorm * P / B0;
-    }
+    //if(diamag) {
+    //phi -= 0.5*dnorm * P / B0;
+    //}
   }
+
+  
 
   /************** SETUP COMMUNICATIONS **************/
   
   comms.add(U);
   comms.add(Psi);
   comms.add(P);
-  comms.add(phi);
+//  comms.add(phi);
 
   phi.setBoundary("phi"); // Set boundary conditions
-  
+  tmpU2.setBoundary("U");
+  tmpP2.setBoundary("P");
+  tmpA2.setBoundary("J");
+  //sourp.setBoundary("U");
+
   if(evolve_jpar) {
     comms.add(Jpar);
   }else {
@@ -917,12 +1114,6 @@ int physics_init(bool restarting)
 
   return 0;
 }
-
-
-/*const Field3D Div_par_CtoL(const Field3D &var)
-{
-  return mesh->Bxy * Grad_par_CtoL(var / mesh->Bxy);
-  }*/
 
 // Parallel gradient along perturbed field-line
 const Field3D Grad_parP(const Field3D &f, CELL_LOC loc = CELL_DEFAULT)
@@ -954,7 +1145,7 @@ const Field3D Grad_parP(const Field3D &f, CELL_LOC loc = CELL_DEFAULT)
       result = Grad_par(f, loc);
     
     if(nonlinear) {
-      result -= b0xGrad_dot_Grad(Psi + rmp_Psi, f);
+      result -= bracket(Psi + rmp_Psi, f, bm_mag)*B0;
     }
   }
 
@@ -965,6 +1156,10 @@ bool first_run = true; // For printing out some diagnostics first time around
 
 int physics_run(BoutReal t)
 {
+  // Perform communications
+  mesh->communicate(comms);
+
+
   ////////////////////////////////////////////
   // Transitions from 0 in core to 1 in vacuum
   if(nonlinear) {
@@ -1052,19 +1247,35 @@ int physics_run(BoutReal t)
     C_phi.setBoundaryTo(Ctmp);
 
   }else {
+
+    if (constn0)
+      {
+	phi = invert_laplace(U, phi_flags, NULL);
+	
+	if(diamag) {
+	  phi -= 0.5*dnorm * P / B0;
+	}
+      }
+    else
+      {
+	ubyn = U/N0;
+	if (diamag)
+	  {
+	    ubyn -= 0.5*dnorm/(N0*B0) * Delp2(P);
+	    //ubyn.applyBoundary();
+	    mesh->communicate(ubyn);
+	    //sourp = Delp2(P);
+	    //sourp.applyBoundary();
+	    //mesh->communicate(sourp);
+	  }
     // Invert laplacian for phi
-    phi = invert_laplace(U, phi_flags, NULL);
-    
-    if(diamag) {
-      phi -= 0.5*dnorm * P / B0;
-    }
-    
+	phi = invert_laplace(ubyn, phi_flags, NULL, &N0, NULL);
+      }
     // Apply a boundary condition on phi for target plates
-    phi.applyBoundary();
+    //phi.applyBoundary();
+    mesh->communicate(phi); 
   }
 
-  // Perform communications
-  mesh->communicate(comms);
 
   if(!evolve_jpar) {
     // Get J from Psi
@@ -1168,18 +1379,19 @@ int physics_run(BoutReal t)
   }else {
     // Vector potential
       
-    ddt(Psi) = -Grad_parP(B0*phi, CELL_YLOW) / B0 + Jpar*eta;
+    ddt(Psi) = -Grad_parP(B0*phi, CELL_CENTRE) / B0 + eta*Jpar;
     //xqx      ddt(Psi) = -Grad_parP(B0*phi, CELL_YLOW) / B0 + eta*Jpar;
 
     if(eHall) {
-      ddt(Psi) +=  0.25*delta_i*(Grad_parP(B0*P, CELL_YLOW) / B0 
+      ddt(Psi) +=  0.25*delta_i*(Grad_parP(B0*P, CELL_CENTRE) / B0 
                                  +b0xGrad_dot_Grad(P0, Psi));   // electron parallel pressure
     }
-    if(diamag && diamag_phi0)
-      ddt(Psi) -= b0xGrad_dot_Grad(B0*phi0, Psi)/B0;   // Equilibrium flow
 
-    if(Vt0!=0 || Vp0!=0)
-      ddt(Psi) += 1.0*V_dot_Grad(V0eff, Psi);
+    if(diamag_phi0)
+      ddt(Psi) -= b0xGrad_dot_Grad(phi0, Psi);   // Equilibrium flow
+
+    if(withflow)                                //net flow 
+      ddt(Psi)-= V_dot_Grad(V0net, Psi);
 
     //F_Psi = -Grad_par_CtoL(B0*phi) / B0 + eta*Jpar;
     
@@ -1199,10 +1411,12 @@ int physics_run(BoutReal t)
       ddt(Psi) -= eta*ehyperviscos * Delp2(Jpar2);
     }
 
-    //xia: adding hyper diffusion of psi
-    if(diffusion_psiP > 0.0) {
-      ddt(Psi) -= diffusion_psiP * Grad2_par2new(Grad2_par2new(Psi));
-    }
+    //xqx: parallel hyper-viscous diffusion for vector potential
+    if(diffusion_a4 > 0.0){
+      tmpA2 = Grad2_par2new(Psi);
+      mesh->communicate(tmpA2);
+      tmpA2.applyBoundary();
+      ddt(Psi) -= diffusion_a4 * Grad2_par2new(tmpA2);}
 
     // Vacuum solution
     if(relax_j_vac) {
@@ -1214,38 +1428,6 @@ int physics_run(BoutReal t)
       
       // Add a relaxation term in the vacuum
       ddt(Psi) = ddt(Psi)*(1. - vac_mask) - (Psi - Psitarget)*vac_mask / relax_j_tconst;
-    }
-
-    //xia: rf-force
-    if(Prf>0.0)
-      {
-	ddt(Psi) -= Bbar*Tbar/(2.*1836*MU0*B0*Lbar*Lbar)*Frf;
-      }
-    
-    // Boundary condition
-    if(psi_inner_ideal && mesh->firstX()) {
-      // Ideal MHD inner boundary condition: ddt(psi) = -Grad_parP(B0*phi, CELL_YLOW)
-      
-      for(int x=0;x<mesh->xstart;x++) {
-        for(int y=mesh->ystart; y <= mesh->yend; y++) {
-          for(int z=0;z<mesh->ngz-1; z++) {
-            // For each grid cell in the inner boundary
-            BoutReal dphidy = (8.*phi[x][y+1][z] - 8.*phi[x][y-1][z] + phi[x][y-2][z] - phi[x][y+2][z])/(12.*mesh->dy[x][y]);
-            ddt(Psi)[x][y][z] = - dphidy/sqrt(mesh->g_22[x][y]);
-          }
-        }
-      }
-    }
-    if(psi_outer_ideal && mesh->lastX()) {
-      for(int x=mesh->xend+1;x<mesh->ngx;x++) {
-        for(int y=mesh->ystart; y <= mesh->yend; y++) {
-          for(int z=0;z<mesh->ngz-1; z++) {
-            // For each grid cell in the inner boundary
-            BoutReal dphidy = (8.*phi[x][y+1][z] - 8.*phi[x][y-1][z] + phi[x][y-2][z] - phi[x][y+2][z])/(12.*mesh->dy[x][y]);
-            ddt(Psi)[x][y][z] = - dphidy/sqrt(mesh->g_22[x][y]);
-          }
-        }
-      }
     }
   }
 
@@ -1285,25 +1467,32 @@ int physics_run(BoutReal t)
     ddt(U) -= (B0^2)*Grad_parP(Jpar, CELL_CENTRE); // b dot grad j
     //ddt(U) -= (B0^2)*Grad_par_LtoC(Jpar);
   }
-  
-  if(diamag && diamag_phi0)
+
+  if(withflow&&K_H_term)                         //K_H_term
+    ddt(U) -=b0xGrad_dot_Grad(phi,U0); 
+
+  if(diamag_phi0)
     ddt(U) -= b0xGrad_dot_Grad(phi0, U);   // Equilibrium flow
 
-  if(Vt0!=0 || Vp0!=0)
-    ddt(U) -= V_dot_Grad(V0vec, U);
+  if(withflow)                            // net flow
+    ddt(U) -= V_dot_Grad(V0net, U);
 
   if(nonlinear) {
-    ddt(U) -= b0xGrad_dot_Grad(phi, U);    // Advection
+    ddt(U) -= bracket(phi, U, bm_exb)*B0;    // Advection
   }
 
   // Viscosity terms 
   if(viscos_par > 0.0)
     ddt(U) += viscos_par * Grad2_par2(U); // Parallel viscosity
   
-    //xia: 4th order diffusion of velocity
-  if(diffusion_U4 > 0.0)
-    ddt(U) -= diffusion_U4 * Grad2_par2new(Grad2_par2new(U));
-
+  //xqx: parallel hyper-viscous diffusion for vorticity
+  if(diffusion_u4 > 0.0){
+    tmpU2 = Grad2_par2new(U);
+    mesh->communicate(tmpU2);
+    tmpU2.applyBoundary();
+    //    tmpU2.applyBoundary("neumann");
+    ddt(U) -= diffusion_u4 * Grad2_par2new(tmpU2);}
+  
   if(viscos_perp > 0.0)
     ddt(U) += viscos_perp * Delp2(U);     // Perpendicular viscosity
 
@@ -1322,6 +1511,58 @@ int physics_run(BoutReal t)
     }
   }
 
+  if(gyroviscous)
+    {
+
+      Field3D Pi;
+      Field2D Pi0;
+      Pi = 0.5*P;
+      Pi0 = 0.5*P0;
+
+      Dperp2Phi0 = Field3D(Delp2(B0*phi0));
+      Dperp2Phi0.applyBoundary();
+      mesh->communicate(Dperp2Phi0);
+
+      Dperp2Phi = Delp2(B0*phi);
+      Dperp2Phi.applyBoundary();
+      mesh->communicate(Dperp2Phi);
+
+      Dperp2Pi0 = Field3D(Delp2(Pi0));
+      Dperp2Pi0.applyBoundary();
+      mesh->communicate(Dperp2Pi0);
+
+      Dperp2Pi = Delp2(Pi);
+      Dperp2Pi.applyBoundary();
+      mesh->communicate(Dperp2Pi);
+
+      bracketPhi0P = bracket(B0*phi0, Pi, bm_exb);
+      bracketPhi0P.applyBoundary();
+      mesh->communicate(bracketPhi0P);
+
+      bracketPhiP0 = bracket(B0*phi, Pi0, bm_exb);
+      bracketPhiP0.applyBoundary();
+      mesh->communicate(bracketPhiP0);
+
+      ddt(U) -= 0.5*Upara2*bracket(Pi, Dperp2Phi0, bm_exb)/B0;
+      ddt(U) -= 0.5*Upara2*bracket(Pi0, Dperp2Phi, bm_exb)/B0;
+      ddt(U) += 0.5*Upara2*bracket(B0*phi, Dperp2Pi0, bm_exb)/B0;
+      ddt(U) += 0.5*Upara2*bracket(B0*phi0, Dperp2Pi, bm_exb)/B0;
+      ddt(U) -= 0.5*Upara2*Delp2(bracketPhi0P)/B0;
+      ddt(U) -= 0.5*Upara2*Delp2(bracketPhiP0)/B0;
+
+      if (nonlinear)
+	{
+
+	  bracketPhiP = bracket(B0*phi, Pi, bm_exb);
+	  bracketPhiP.applyBoundary();
+	  mesh->communicate(bracketPhiP);
+	  
+	  ddt(U) -= 0.5*Upara2*bracket(Pi, Dperp2Phi, bm_exb)/B0;
+	  ddt(U) += 0.5*Upara2*bracket(B0*phi, Dperp2Pi, bm_exb)/B0;
+	  ddt(U) -= 0.5*Upara2*Delp2(bracketPhiP)/B0;
+	}
+    }
+
   // left edge sink terms 
   if(sink_Ul > 0.0){
     ddt(U) -=  sink_Ul*sink_tanhxl(P0,U,su_widthl,su_lengthl); // core sink
@@ -1339,38 +1580,32 @@ int physics_run(BoutReal t)
   if(evolve_pressure) {
     ddt(P) -= b0xGrad_dot_Grad(phi, P0);
     
-    if(diamag && diamag_phi0)
+    if(diamag_phi0)
       ddt(P) -= b0xGrad_dot_Grad(phi0, P);   // Equilibrium flow
 
-    if(Vt0!=0 || Vp0!=0)
-      ddt(P) -= V_dot_Grad(V0vec, P);
+    if(withflow)                              //net flow
+      ddt(P) -= V_dot_Grad(V0net, P);  
 
     if(nonlinear)
-      ddt(P) -= b0xGrad_dot_Grad(phi, P);
+      ddt(P) -= bracket(phi, P, bm_exb)*B0;    // Advection      
   }
 
   // Parallel diffusion terms 
   if(diffusion_par > 0.0)
     ddt(P) += diffusion_par * Grad2_par2(P); // Parallel diffusion
 
-  //another choice
-  //  if(diffusion_par > 0.0)
-  //  ddt(P) += diffusion_par * Grad2_par2new(P)
-
-  //M: 4th order Parallel diffusion terms 
-  if(diffusion_p4 > 0.0)
-    ddt(P) -= diffusion_p4 * Grad2_par2new(Grad2_par2new(P));
-
-  // xia: rf power
-  if(Prf>0.0)
-    ddt(P) += 2./3.*Prf_h; 
+  //xqx: parallel hyper-viscous diffusion for pressure
+  if(diffusion_p4 > 0.0){
+    tmpP2 = Grad2_par2new(P);
+    mesh->communicate(tmpP2);
+    tmpP2.applyBoundary();
+    ddt(P) = diffusion_p4 * Grad2_par2new(tmpP2);}
 
   // heating source terms 
-  if(heating_P > 1.0){
+  if(heating_P > 0.0){
     BoutReal pnorm = P0[0][0];
-    //    ddt(P) += 2./3.*Prf_h;  // xia:  rf waves 
     ddt(P) += heating_P*source_expx2(P0,2.*hp_width,0.5*hp_length)*(Tbar/pnorm); // heat source
-    //ddt(P) += (100.*source_tanhx(P0,hp_width,hp_length)+0.01) * mesh->g11 * D2DX2(P) * (Tbar/Lbar/Lbar) ;     // radial diffusion
+    ddt(P) += (100.*source_tanhx(P0,hp_width,hp_length)+0.01) * mesh->g11 * D2DX2(P) * (Tbar/Lbar/Lbar) ;     // radial diffusion
   }
 
   // sink terms 
@@ -1383,8 +1618,8 @@ int physics_run(BoutReal t)
   
   if(compress0) {
     
-    ddt(P) += beta*( - Grad_parP(Vpar, CELL_CENTRE) + Vpar*gradparB );
-    //    ddt(P) -= beta*Div_par_CtoL(Vpar);
+    //ddt(P) += beta*( - Grad_parP(Vpar, CELL_CENTRE) + Vpar*gradparB );
+    ddt(P) -= beta*Div_par_CtoL(Vpar);
     
     if(phi_curv) {
       ddt(P) -= 2.*beta*b0xcv*Grad(phi);
@@ -1392,42 +1627,11 @@ int physics_run(BoutReal t)
 
     // Vpar equation
 
-    ddt(Vpar) = -0.5*Grad_parP(P + P0, CELL_CENTRE);
-    //    ddt(Vpar) = -0.5*Grad_parP(P + P0, CELL_YLOW);
-    //    ddt(Vpar) = -0.5*Grad_par_LtoC(P + P0);
+    //ddt(Vpar) = -0.5*Grad_parP(P + P0, CELL_YLOW);
+    ddt(Vpar) = -0.5*Grad_par_LtoC(P + P0);
 
     if(nonlinear)
-      ddt(Vpar) -= b0xGrad_dot_Grad(phi, Vpar); // Advection
-
-    //xia: diffusion of velocity
-    if(diffusion_Vpar > 0.0)
-      ddt(Vpar) += diffusion_Vpar * Grad2_par2(Vpar); // Parallel diffusion
-
-    //another choice
-    //    if(diffusion_Vpar > 0.0)
-    //  ddt(Vpar) += diffusion_Vpar * Grad2_par2new(Vpar);
-
-    //M: 4th order diffusion of velocity
-    if(diffusion_v4 > 0.0)
-      ddt(Vpar) -= diffusion_v4 * Grad2_par2new(Grad2_par2new(Vpar));
-
-    //xqx include vpar convection
-    //#if 0
-    if(nonlinear) {
-      if(evolve_jpar) {
-	ddt(Jpar) -= Vpar_Grad_par(Vpar, Jpar);
-      }//else
-	//	ddt(Psi) -= Vpar_Grad_par(Vpar, Psi);
-
-      ddt(U) -= Vpar_Grad_par(Vpar, U);
-      ddt(P) -= Vpar_Grad_par(Vpar, P+P0);
-      ddt(Vpar) -= Vpar_Grad_par(Vpar, Vpar);
-    }
-    //#endif
-
-    //xia: rf force
-    if(Prf>0.0)
-      ddt(Vpar) += Frf;
+      ddt(Vpar) -= bracket(phi, Vpar, bm_exb)*B0; // Advection
   }
   
   if(filter_z) {
@@ -1440,10 +1644,6 @@ int physics_run(BoutReal t)
 
     ddt(U) = filter(ddt(U), filter_z_mode);
     ddt(P) = filter(ddt(P), filter_z_mode);
-
-    if(compress0) {
-      ddt(Vpar) = filter(ddt(Vpar), filter_z_mode);
-    }
   }
 
   if(low_pass_z > 0) {
@@ -1455,10 +1655,6 @@ int physics_run(BoutReal t)
 
     ddt(U) = lowPass(ddt(U), low_pass_z, zonal_flow);
     ddt(P) = lowPass(ddt(P), low_pass_z, zonal_bkgd);
-
-    if(compress0) {
-      ddt(Vpar) = lowPass(ddt(Vpar), low_pass_z, zonal_bkgd);
-    }
   }
 
   if(damp_width > 0) {
@@ -1483,11 +1679,10 @@ int physics_run(BoutReal t)
  * Preconditioner
  *
  * o System state in variables (as in rhs function)
- * o Values to be inverted in F_vars
+ * o Values to be inverted in time derivatives
  * 
- * o Return values should be in vars (overwriting system state)
+ * o Return values should be in time derivatives
  *
- * NOTE: EXPERIMENTAL
  * enable by setting solver / use_precon = true in BOUT.inp
  *******************************************************************************/
 
@@ -1496,7 +1691,7 @@ int precon(BoutReal t, BoutReal gamma, BoutReal delta) {
   mesh->communicate(ddt(Psi));
   Field3D Jrhs = Delp2(ddt(Psi));
   Jrhs.applyBoundary("neumann");
-  
+
   if(jpar_bndry_width > 0) {
     // Boundary in jpar
     if(mesh->firstX()) {
@@ -1504,7 +1699,8 @@ int precon(BoutReal t, BoutReal gamma, BoutReal delta) {
         for(int j=0;j<mesh->ngy;j++)
           for(int k=0;k<mesh->ngz-1;k++) {
             Jrhs[i][j][k] = 0.5*Jrhs[i+1][j][k];
-          }
+}
+
     }
     if(mesh->lastX()) {
       for(int i=mesh->ngx-jpar_bndry_width-1;i<mesh->ngx;i++)
@@ -1513,32 +1709,30 @@ int precon(BoutReal t, BoutReal gamma, BoutReal delta) {
             Jrhs[i][j][k] = 0.5*Jrhs[i-1][j][k];
           }
     }
-  }
-  
+}
+
   mesh->communicate(Jrhs, ddt(P));
-  
+
   Field3D U1 = ddt(U);
   U1 += (gamma*B0*B0)*Grad_par(Jrhs, CELL_CENTRE) + (gamma*b0xcv)*Grad(P);
-  
+
   // Second matrix, solving Alfven wave dynamics
   static InvertPar *invU = 0;
   if(!invU)
     invU = InvertPar::Create();
-  
+
   invU->setCoefA(1.);
   invU->setCoefB(-SQ(gamma)*B0*B0);
-  U = invU->solve(U1);
-  U.applyBoundary();
+  ddt(U) = invU->solve(U1);
+  ddt(U).applyBoundary();
   
   // Third matrix, applying U
-  Field3D phi3 = invert_laplace(U, phi_flags, NULL);
+  Field3D phi3 = invert_laplace(ddt(U), phi_flags, NULL);
   mesh->communicate(phi3);
   phi3.applyBoundary("neumann");
-
-  Psi = ddt(Psi) - gamma*Grad_par(B0*phi3)/B0;
-  Psi.applyBoundary();
   
-  P = ddt(P);// Not preconditioned
+  ddt(Psi) = ddt(Psi) - gamma*Grad_par(B0*phi3)/B0;
+  ddt(Psi).applyBoundary();
   
   return 0;
 }
@@ -1556,8 +1750,7 @@ int precon(BoutReal t, BoutReal gamma, BoutReal delta) {
  * enable by setting solver / use_jacobian = true in BOUT.inp
  *******************************************************************************/
 
-int jacobian(BoutReal t)
-{
+int jacobian(BoutReal t) {
   // NOTE: LINEAR ONLY!
   
   // Communicate
@@ -1580,11 +1773,11 @@ int jacobian(BoutReal t)
     + (B0^2) * b0xGrad_dot_Grad(ddt(Psi), J0, CELL_CENTRE);
   JU.setBoundary("U"); JU.applyBoundary();
 
-  // Put result into vars
+  // Put result into time-derivatives
 
-  P = JP;
-  Psi = JPsi;
-  U = JU;
+  ddt(P) = JP;
+  ddt(Psi) = JPsi;
+  ddt(U) = JU;
 
   return 0;
 }
@@ -1599,16 +1792,8 @@ int jacobian(BoutReal t)
  * o Return values should be in vars (overwriting system state)
  *******************************************************************************/
 
-int precon_phi(BoutReal t, BoutReal cj, BoutReal delta)
-{
-  P = ddt(P);
-  Psi = ddt(Psi);
-  /*
-  invert_laplace(F_U, phi, phi_flags, NULL);
-  phi = C_phi + phi;
-  */
-  phi = invert_laplace(C_phi - ddt(U), phi_flags, NULL);
-  U = ddt(U);
+int precon_phi(BoutReal t, BoutReal cj, BoutReal delta) {
+  ddt(phi) = invert_laplace(C_phi - ddt(U), phi_flags, NULL);
   return 0;
 }
 

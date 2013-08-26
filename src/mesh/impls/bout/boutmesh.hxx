@@ -101,6 +101,18 @@ class BoutMesh : public Mesh {
 
   int XGLOBAL(int xloc) const;
   int YGLOBAL(int yloc) const;
+
+  // poloidal lowpass filtering for n=0 mode
+  void slice_r_y(BoutReal *fori, BoutReal * fxy, int ystart, int ncy);
+  void get_ri( dcomplex * ayn, int ncy, BoutReal * ayn_Real, BoutReal * ayn_Imag);
+  void set_ri( dcomplex * ayn, int ncy, BoutReal * ayn_Real, BoutReal * ayn_Imag);
+  const Field2D lowPass_poloidal(const Field2D &var,int mmax);
+
+  //added for volume average and integral
+  const Field3D Switch_YZ(const Field3D &var);
+  BoutReal Average_XY(const Field2D &var);
+  BoutReal Vol_Integral(const Field2D &var);
+
  private:
   int nx, ny;        ///< Size of the grid in the input file
   int MX, MY;        ///< size of the grid excluding boundary regions

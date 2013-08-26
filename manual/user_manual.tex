@@ -117,8 +117,9 @@ specify a new problem (grid and equations) to be solved. In either case, it's as
 the user isn't all that interested in the details of the code.
 For a more detailed descriptions of the code internals, see the developer
 and reference quides.
-After describing how to install BOUT++ (section~\ref{sec:install}) and run a few examples 
-(section~\ref{sec:runexamples}, but described in detail in section~\ref{sec:examples}), increasingly sophisticated ways to modify the problem being solved are introduced.
+After describing how to install BOUT++ (section~\ref{sec:install}), run the test suite
+(section~\ref{sec:runtestsuite}) and a few examples 
+(section~\ref{sec:running}, more detail in section~\ref{sec:examples}), increasingly sophisticated ways to modify the problem being solved are introduced.
 The simplest way to modify a simulation case is by altering the input options, described in
 section~\ref{sec:options}. Checking that the options are doing what you think they should be
 by looking at the output logs is described in section~\ref{sec:running}, and an overview of the IDL analysis routines
@@ -186,6 +187,7 @@ when using this code:
 \end{enumerate}
 
 \section{Getting started}
+\label{sec:install}
 
 This section goes through the process of getting, installing, and
 starting to run BOUT++. Only the basic functionality needed to use BOUT++
@@ -287,7 +289,10 @@ and the startup file is \texttt{\$HOME/.cshrc}. You should now be able to run
 
 After getting an MPI compiler, the next step is to make sure the
 libraries BOUT++ needs are installed. At minimum BOUT++ needs the FFTW-3
-library, and to run any of the examples you'll also need NetCDF-4 installed. 
+library, and to run any of the examples you'll also need NetCDF-4 (prior to 4.2) installed. 
+
+\note{There are currently issues with support for NetCDF's new C++ API, which appeared in 4.2. 
+For now use NetCDF 4.1.x}
 
 Most large machines (e.g. NERSC Hopper, HECToR, HPC-FF etc.)
 will have these libraries and many more already installed, but you may 
@@ -522,9 +527,10 @@ SUNDIALS and PETSc.
 
 \subsection{File formats}
 
-BOUT++ can currently use two different file formats: Portable Data Binary
-(PDB) which is part of PACT\footnote{\url{http://pact.llnl.gov}}, and
-NetCDF-4\footnote{\url{http://www.unidata.ucar.edu/software/netcdf/}}.
+BOUT++ can currently use three different file formats: Portable Data Binary
+(PDB) which is part of PACT\footnote{\url{http://pact.llnl.gov}}, 
+NetCDF-4\footnote{\url{http://www.unidata.ucar.edu/software/netcdf/}},
+and experimental support for Parallel NetCDF.
 PDB was developed at LLNL, was used in the UEDGE and BOUT codes, and 
 was the original format used by BOUT++. NetCDF is a more widely used
 format and so has many more tools for viewing and manipulating files.
@@ -609,13 +615,11 @@ for more details on how to do this.
 
 \subsection{PETSc}
 
-BOUT++ can use PETSc for time-integration:
+BOUT++ can use PETSc for time-integration and for solving elliptic problems, such as inverting
+Poisson and Helmholtz equations.
 \begin{verbatim}
 ./configure --with-petsc
 \end{verbatim}
-
-This will allow use of a greater number of sophisticated time-integration
-packages and preconditioning methods, and is under development.
 
 The development version of PETSc has the latest and greatest, and is needed for some 
 shiny features like timestepping. To install it, follow the instructions here:
@@ -628,13 +632,23 @@ cd petsc-dev
 hg clone http://petsc.cs.iit.edu/petsc/BuildSystem config/BuildSystem
 \end{verbatim}
 
-then configure PETSc, making sure to enable C++ and SUNDIALS support
+then configure PETSc, making sure to enable C++. 
 \begin{verbatim}
 ./configure --with-fortran=0 --with-c++-support=1 --with-mpi=1 \
             --with-sundials=1 --with-sundials-dir=$HOME/local/
 \end{verbatim}
-replacing \texttt{\$HOME/local/} with the location of your SUNDIALS installation. Finally
-compile PETSc:
+You can add SUNDIALS support, but it is not required. To do this, add the following
+to the end of the configure command:
+\begin{verbatim}
+--with-sundials=1 --with-sundials-dir=$HOME/local/
+\end{verbatim}
+replacing \texttt{\$HOME/local/} with the location of your SUNDIALS installation.
+It is also useful to get PETSc to download and install MUMPS (see below), by adding
+\begin{verbatim}
+--download-mumps
+\end{verbatim}
+
+Finally compile PETSc:
 \begin{verbatim}
 make
 \end{verbatim}
@@ -710,14 +724,16 @@ cvode.cxx:234:56: error: invalid conversion from ‘int (*)(CVINT...
 ...
 \end{verbatim}
 
-This is caused by different sizes of ints used in compiling the CVODE library. To fix, edit
+This is caused by different sizes of ints used in different versions of the CVODE library. 
+The configure script tries to determine the correct type to use, but may fail in unusual circumstances.
+To fix, edit
 \file{src/solver/impls/cvode/cvode.cxx}, and change line 48 from
 \begin{lstlisting}[numbers=none]
-typedef int CVINT;
+typedef int CVODEINT;
 \end{lstlisting}
 to
 \begin{lstlisting}[numbers=none]
-typedef long CVINT;
+typedef long CVODEINT;
 \end{lstlisting}
 
 \section{Running BOUT++}
@@ -772,7 +788,8 @@ produce a bunch of files in the \file{data/} subdirectory.
   The one from processor $0$ will be the same as what was printed to the screen. This is mainly useful because
   if one process crashes it may only put an error message into its own log.
 \item \file{BOUT.restart.*.nc} are the restart files for the last time point. 
-  As of June 2012 each processor saves its own state in a separate file, but this is being worked on.
+  Currently each processor saves its own state in a separate file, but there is experimental
+  support for parallel I/O. For the settings, see section~\ref{sec:iooptions}.
 \item \file{BOUT.dmp.*.nc} contain the output data, including time history. As with the restart
   files, each processor currently outputs a separate file.
 \end{itemize}
@@ -827,6 +844,25 @@ and to make this a coloured contour plot
 IDL> showdata, T[*,*,0,*], /cont
 \end{verbatim}
 
+The equivalent commands in Python are as follows. To print a list of variables
+in a file:
+\begin{verbatim}
+>>> from boututils import DataFile
+>>> DataFile("BOUT.dmp.0.nc").list()
+\end{verbatim}
+To collect a variable,
+\begin{verbatim}
+>>> from boutdata import collect
+>>> T = collect("T")
+>>> T.shape
+\end{verbatim}
+Note that the order of the indices is different in Python and IDL: In Python,
+4D variables are arranged as \code{[t, x, y, z]}.
+To show an animation
+\begin{verbatim}
+>>> from boututils import showdata
+>>> showdata.showdata(T[:,:,:,0])
+\end{verbatim}
 
 The next example to look at is \file{test-wave}, which is solving a wave equation using
 \[
@@ -1420,6 +1456,11 @@ from boutdata import collect
 Ni = collect("Ni")  # Collect the variable "Ni"
 \end{lstlisting}
 
+\subsection{Matlab routines}
+
+There are Matlab routines for collecting data, showing animations, and performing some basic analysis.
+See the \file{tools/matlablib/} directory and \file{README.txt} file.
+
 \subsection{Octave routines}
 
 There is minimal support for reading data into Octave, which has been tested on
@@ -1472,6 +1513,29 @@ finally = "some text"   # a string
 \note{Options are NOT case-sensitive: \code{TwistShift} and \code{twistshift} are the same variable}
 
 Have a look through the examples to see how the options are used.
+
+\subsection{Command line options}
+\index{Command line}
+All options can be set on the command line, and will override those set in BOUT.inp. 
+The most commonly used are ``restart'' and ``append'', described in section~\ref{sec:running}.
+If values are not given for command-line arguments, then the value is set to \lstinline!true!, so
+putting \lstinline!restart! is equivalent to \lstinline!restart=true!. 
+
+Values can be specified on the command line for other settings, such as the fraction of a
+torus to simulate (ZPERIOD):
+\begin{verbatim}
+ ./command zperiod=10
+\end{verbatim}
+Remember {\bf no} spaces around the '=' sign. Like the BOUT.inp file, setting names are not case sensitive.
+
+Sections are currently separated by underscores '\_', so to set the solver type (section~\ref{sec:timeoptions})
+you can either put this in BOUT.inp:
+\begin{verbatim}
+[solver]
+type = rk4
+\end{verbatim}
+or put \lstinline!solver_type=rk4! on the command line. This capability is used in many test suite cases
+to change the parameters for each run.
 
 \subsection{General options}
 
@@ -1605,7 +1669,7 @@ rtol & Relative tolerance & rk4, pvode, cvode, ida \\
 mxstep & Maximum internal steps  & rk4 \\
        & per output step & \\
 max\_timestep & Maxmimum timestep & rk4, cvode \\
-timestep & Starting timestep & rk4, karniadakis \\
+timestep & Starting timestep & rk4, karniadakis, euler \\
 adaptive & Adapt timestep? (Y/N) & rk4 \\
 use\_precon & Use a preconditioner? (Y/N) & pvode, cvode, ida \\
 mudq, mldq & BBD preconditioner settings & pvode, cvode, ida \\
@@ -1614,11 +1678,54 @@ maxl & & \\
 use\_jacobian & Use user-supplied Jacobian? (Y/N) & cvode \\
 adams\_moulton & Use Adams-Moulton method & cvode \\
  & rather than BDF & \\
+diagnose & Collect and print additional diagnostics & cvode \\
 \hline
 \end{tabular}
 \end{table}
 The most commonly changed options are the  absolute and relative solver tolerances,
 \code{ATOL} and \code{RTOL} which should be varied to check convergence.
+
+\subsection{Input and Output}
+\label{sec:iooptions}
+
+The output (dump) files with time-history are controlled by settings in a section called ``output''. 
+Restart files contain a single time-slice, and are controlled by a section called ``restart''. The options
+available are listed in table~\ref{tab:outputopts}.
+
+\begin{table}[htb!]
+\centering
+\caption{Output file options}
+\label{tab:outputopts}
+\begin{tabular}{c | c | c}
+\hline
+Option & Description & Default\\
+       &             & value\\
+\hline
+enabled & Writing is enabled & true \\
+floats & Write floats rather than doubles & true (dmp)\\
+flush & Flush the file to disk after each write & true \\
+guards & Output guard cells & true \\
+openclose & Re-open the file for each write, and close after & true \\
+parallel & Use parallel I/O & false \\
+\hline
+\end{tabular}
+\end{table}
+
+{\bf enabled} is useful mainly for doing performance or scaling tests, where you want to exclude
+I/O from the timings. {\bf floats} is used to reduce the size of the output files: restart files are
+stored as double by default (since these will be used to restart a simulation), but output dump files
+are set to floats by default.
+
+To enable parallel I/O for either output or restart files, set 
+\begin{lstlisting}
+parallel = true
+\end{lstlisting}
+in the output or restart section. If you have compiled BOUT++ with a parallel I/O library
+such as pnetcdf (see section~\ref{sec:advancedinstall}), then rather than outputting one file per processor, all 
+processors will output to the same file. For restart files this is particularly useful,
+as it means that you can restart a job with a different number of processors. 
+Note that this feature is still experimental, and incomplete: output dump files are
+not yet supported by the collect routines.
 
 \subsection{Laplacian inversion}
 \index{Laplacian inversion}
@@ -1809,14 +1916,20 @@ The following functions are also available in expressions:
 Name & Description \\
 \hline
 abs(x) & Absolute value $\left|x\right|$\\
+asin(x), acos(x), atan(x), atan(y,x) & Inverse trigonometric functions \\
 cos(x) & Cosine\\
 cosh(x) & Hyperbolic cosine\\
+exp(x) & Exponential \\
 tanh(x) & Hyperbolic tangent \\
 gauss(x) & Gaussian $\exp\left(-x^2/2\right) / \sqrt{2\pi}$\\
 gauss(x, w) & Gaussian $\exp\left[-x^2/\left(2w^2\right)\right] / \left(w\sqrt{2\pi}\right)$\\
+log(x) & Natural logarithm \\
+min(x,y,...) & Minimum (variable arguments) \\
+max(x,y,...) & Maximum (variable arguments) \\
 sin(x) & Sine\\
 sinh(x) & Hyperbolic sine\\
 sqrt(x) & $\sqrt{x}$\\
+tan(x) & Tangent \\
 H(x) & Heaviside function: $1$ if $x > 0$ otherwise $0$\\
 \hline
 \end{tabular}
@@ -2065,11 +2178,17 @@ output from different codes and converting into input to BOUT++.
 \label{fig:gridgen}
 \end{figure}
 
-\subsection{Converting grid files}
-\index{ELITE}\index{GATO}
+\subsection{From EFIT files}
+\index{EFIT}\index{Hypnotoad}
+An IDL code called ``Hypnotoad'' has been developed to create BOUT++ input files from
+R-Z equilibria. This can read EFIT 'g' files, find flux surfaces, and calculate metric coefficients.
+The code is in \file{tools/tokamak\_grids/gridgen}, and has its own manual under the \file{doc} subdirectory.
+
+\subsection{From ELITE and GATO files}
+\index{ELITE}\index{GATO}\index{dskgato}
 Currently conversions exist for ELITE \code{.eqin} and GATO \code{dskgato} equilibrium files.
 Conversion of these into BOUT++ input grids is in two stages: In the first, both these
-input files are converted into a common PDB format which describes the Grad-Shafranov equilibrium.
+input files are converted into a common NetCDF or PDB format which describes the Grad-Shafranov equilibrium.
 These intermediate files are then converted to BOUT++ grids using an interactive IDL script.
 
 
@@ -2237,7 +2356,8 @@ is given in the file \texttt{mhd.cxx} in the BOUT++ examples directory. The equa
 \deriv{\mathbf{B}}{t} &=& \nabla\times\left(\mathbf{v}\times\mathbf{B}\right)
 \end{eqnarray*}
 
-To specify a set of equations to solve in BOUT++, two functions need to be written:
+There are two ways to specify a set of equations to solve in BOUT++. For advanced users, an object-oriented interface is available and described in section~\ref{sec:newapi}. The simplest way to start is to
+use a C-like interface and define two functions:
 \begin{lstlisting}
 int physics_init(bool restarting) {
   return 0;
@@ -2927,6 +3047,84 @@ which can also take arguments in \code{printf} format, as with \code{output.writ
 If an error occurs, the message stack is printed out, and this can then
 help track down where the error originated.
 
+\section{Object-orientated interface}
+\label{sec:newapi}
+
+If you prefer to create classes rather than global variables and C functions for your physics model,
+this can be done using a (somewhat experimental) interface. To see the difference,
+compare \file{examples/advect1d/gas\_compress.cxx} with\\
+\file{examples/advect1d-newapi/gas\_compress.cxx}. The disadvantage of this interface 
+is that it's marginally more complicated to set up, but it has several advantages: It makes splitting
+the model into multiple files easier (sharing global variables is a pain), models can be combined
+together to enable coupling of models, and BOUT++ can be more easily used alongside other libraries. 
+For large models, it's recommended to use this method. Converting
+C-style interface to a class is also quite straightforward, and discussed below.
+
+In a header file (e.g. \file{examples/advect1d-newapi/gas\_compress.hxx}), first put
+\begin{lstlisting}
+#include <bout/physicsmodel.hxx>
+\end{lstlisting}
+(do NOT include \file{boutmain.hxx}, as that defines the C-like interface and a \lstinline!main()! function).
+
+Next define a class which inherits from \lstinline!PhysicsModel! 
+\begin{lstlisting}
+class GasCompress : public PhysicsModel {
+protected:
+  int init(bool restarting);
+  int rhs(BoutReal t);
+private:
+  // Evolving variables, parameters etc. here
+};
+\end{lstlisting}
+As a minimum, you need to define the initialisation function \lstinline!init! (it's a pure virtual
+member of PhysicsModel, so if you don't you'll get a compile-time error). Any variables being evolved
+should now be members of this class. If you are converting a C-style model, just move all the global variables into the \lstinline!private! section.
+
+Next create a source file (e.g. \file{examples/advect1d-newapi/gas\_compress.cxx}, which
+includes your header file
+\begin{lstlisting}
+#include "gas_compress.hxx"
+\end{lstlisting}
+
+Then implement the init and rhs functions:
+\begin{lstlisting}
+int GasCompress::init(bool restarting) {
+  ...
+}
+
+int GasCompress::rhs(BoutReal t) {
+  ...
+}
+\end{lstlisting}
+To convert simple physics models, just rename \lstinline!physics\_init! to \lstinline!YourModel::init!,
+and \lstinline!physics\_run! to \lstinline!YourModel::run!. 
+
+Finally, you need to create a \lstinline!main()! function for your code. The easiest way to do this
+is to use the macro \lstinline!BOUTMAIN!:
+\begin{lstlisting}
+BOUTMAIN(GasCompress);
+\end{lstlisting}
+This is defined in \file{include/bout/physicsmodel.hxx}, and expands to
+\begin{lstlisting}
+  int main(int argc, char **argv) {
+    BoutInitialise(argc, argv); // Initialise BOUT++
+    
+    GasCompress *model = new GasCompress(); // Create a model
+    
+    Solver *solver = Solver::create(); // Create a solver
+    solver->setModel(model); // Specify the model to solve
+    solver->addMonitor(bout_monitor); // Monitor the solver
+    
+    solver->solve(); // Run the solver
+    
+    delete model;
+    delete solver;
+    BoutFinalise(); // Finished with BOUT++
+    return 0;
+  }
+\end{lstlisting}
+If you like, you can define your own \lstinline!main()! function, making it easier to combine
+BOUT++ with other libraries. 
 
 \section{Differential operators}
 \label{sec:diffops}
@@ -3284,19 +3482,20 @@ int precon(BoutReal t, BoutReal gamma, BoutReal delta) {
 }
 \end{lstlisting}
 which takes as input the current time, the $\gamma$ factor appearing above, and $\delta$ which is only important for constrained problems (not discussed here... yet). The current state of the system is stored in the state variables (here \lstinline!u! and \lstinline!v!), whilst the vector to be preconditioned is stored in the time derivatives 
-(here \lstinline!ddt(u)! and \lstinline!ddt(v)!). At the end of the preconditioner the result should be in the state variables. A preconditioner which is just the identity matrix and so does nothing is:
+(here \lstinline!ddt(u)! and \lstinline!ddt(v)!). At the end of the preconditioner the result should be in the time derivatives. A preconditioner which is just the identity matrix and so does nothing is therefore:
 \begin{lstlisting}[numbers=none]
 int precon(BoutReal t, BoutReal gamma, BoutReal delta) {
-  u = ddt(u);
-  v = ddt(v);
 }
 \end{lstlisting}
+\note{This changed in github/bendudson on 15th Aug 2014. In older versions the result must be returned
+in the state variables}
+
 To implement the preconditioner in equation~\ref{eq:precon}, first apply the rightmost matrix to the given
 vector:
 \[
 \left(\begin{array}{c}
-u \\
-v
+\texttt{ddt(u)} \\
+\texttt{ddt(v)}
 \end{array}\right) = \left(\begin{array}{cc}
 1 & 0 \\
 \gamma\partial_{||} & 1
@@ -3308,25 +3507,24 @@ v
 \begin{lstlisting}[numbers=none]
 int precon(BoutReal t, BoutReal gamma, BoutReal delta) {
   mesh->communicate(ddt(u));
-  u = ddt(u);
-  v = gamma*Grad_par(ddt(u)) + ddt(v);
+  //ddt(u) = ddt(u);
+  ddt(v) = gamma*Grad_par(ddt(u)) + ddt(v);
 \end{lstlisting}
-note that since the preconditioner is linear, it doesn't depend on $u$ or $v$ and so we can overwrite their
-values. In the nonlinear case we would need to create new variables to store these intermediate values in.
-As in the RHS function, since we are taking a differential of \texttt{ddt(u)}, it first needs to be communicated
-to exchange guard cell values.
+note that since the preconditioner is linear, it doesn't depend on $u$ or $v$. 
+As in the RHS function, since we are taking a differential of \texttt{ddt(u)},
+it first needs to be communicated to exchange guard cell values.
 
 The second matrix
 \[
 \left(\begin{array}{c}
-u \\
-v
+\texttt{ddt(u)} \\
+\texttt{ddt(v)}
 \end{array}\right) \leftarrow \left(\begin{array}{cc}
 1 & 0 \\
 0 & \left(1 - \gamma^2\partial^2_{||}\right)^{-1}
 \end{array}\right)\left(\begin{array}{c}
-u \\
-v
+\texttt{ddt(u)} \\
+\texttt{ddt(v)}
 \end{array}\right)
 \]
 doesn't alter $u$, but solves a parabolic equation in the parallel direction. There is a solver class to do this 
@@ -3344,30 +3542,30 @@ int physics_init(bool restarting) {
 In the preconditioner we then use this solver to update $v$:
 \begin{lstlisting}[numbers=none]
   inv->setCoefB(-SQ(gamma));
-  v = inv->solve(v);
+  ddt(v) = inv->solve(ddt(v));
 \end{lstlisting}
-which solves $v \leftarrow \left(1 - \gamma^2\partial_{||}^2\right)^{-1} v$.
+which solves $ddt(v) \leftarrow \left(1 - \gamma^2\partial_{||}^2\right)^{-1} ddt(v)$.
 The final matrix just updates $u$ using this new solution for $v$
 \[
 \left(\begin{array}{c}
-u \\
-v
+\texttt{ddt(u)} \\
+\texttt{ddt(v)}
 \end{array}\right) \leftarrow \left(\begin{array}{cc}
 1 & \gamma\partial_{||} \\
 0 & 1
 \end{array}\right)\left(\begin{array}{c}
-u \\
-v
+\texttt{ddt(u)} \\
+\texttt{ddt(v)}
 \end{array}\right)
 \]
 \begin{lstlisting}[numbers=none]
-  mesh->communicate(v);
-  u = u + gamma*Grad_par(v);
+  mesh->communicate(ddt(v));
+  ddt(u) = ddt(u) + gamma*Grad_par(ddt(v));
 \end{lstlisting}
 Finally, boundary conditions need to be imposed, which should be consistent with the conditions used in the RHS
 \begin{lstlisting}[numbers=none]
-  u.applyBoundary("dirichlet");
-  v.applyBoundary("dirichlet");
+  ddt(u).applyBoundary("dirichlet");
+  ddt(v).applyBoundary("dirichlet");
 \end{lstlisting}
 
 To use the preconditioner, pass the function to the solver in \lstinline!physics_init!
@@ -3535,44 +3733,6 @@ efficient implementation of the Fields classes}.
 \bibliographystyle{unsrt}
 
 \appendix
-
-\section{Useful quantities}
-
-\subsection{Divergence of ExB velocity}
-
-\[
-\underline{v}_{ExB} = \frac{\underline{b}\times\nabla\phi}{B}
-\]
-Using
-\[
-\nabla\cdot\left(\underline{F}\times\underline{G}\right) = \left(\nabla\times\underline{F}\right)\cdot\underline{G} - \underline{F}\cdot\left(\nabla\times\underline{G}\right)
-\]
-the divergence of the $\underline{E}\times\underline{B}$ velocity
-can be written as 
-\begin{equation}
-\nabla\cdot\left(\frac{1}{B}\underline{b}\times\nabla\phi\right) = \left[\nabla\times\left(\frac{1}{B}\underline{b}\right)\right]\cdot\nabla\phi - \frac{1}{B}\underline{b}\cdot\nabla\times\nabla\phi
-\label{eq:exb1}
-\end{equation}
-The second term on the right is identically zero (curl of a gradient). The first term on the right can be expanded as
-\[
-\left[\nabla\times\left(\frac{1}{B}\underline{b}\right)\right]\cdot\nabla\phi = \left[\nabla\left(\frac{1}{B}\right)\times\underline{b} + \frac{1}{B}\nabla\times\underline{b}\right]\cdot\nabla\phi
-\]
-Using
-\[
-\underline{b}\times\underline{\kappa} = \nabla\times\underline{b} - \underline{b}\left[\underline{b}\cdot\left(\nabla\times\underline{b}\right)\right]
-\]
-this becomes:
-\begin{eqnarray*}
-  \nabla\cdot\left(\frac{1}{B}\underline{b}\times\nabla\phi\right) = &-&\underline{b}\times\nabla\left(\frac{1}{B}\right)\cdot\nabla\phi \\
-  &+& \frac{1}{B}\underline{b}\times\underline{\kappa}\cdot\nabla\phi \\
-  &+& \left[\underline{b}\cdot\left(\nabla\times\underline{b}\right)\right]\underline{b}\cdot\nabla\phi
-\end{eqnarray*}
-
-Alternatively, equation~\ref{eq:exb1} can be expanded as
-\begin{eqnarray*}
-  \nabla\cdot\left(\frac{1}{B}\underline{b}\times\nabla\phi\right) &=& -B\underline{b}\times\nabla\left(\frac{1}{B^2}\right)\cdot\nabla\phi + \frac{1}{B^2}\nabla\times\underline{B}\cdot\nabla\phi \\
-  &=& -B\underline{b}\times\nabla\left(\frac{1}{B^2}\right)\cdot\nabla\phi + \frac{1}{B^2}\underline{J}\cdot\nabla\phi
-\end{eqnarray*}
 
 \section{Installing PACT}
 \label{apx:pact}

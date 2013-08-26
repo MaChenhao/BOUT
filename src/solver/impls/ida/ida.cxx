@@ -48,8 +48,12 @@
 #define ZERO        RCONST(0.)
 #define ONE         RCONST(1.0)
 
+#ifndef IDAINT
+typedef int IDAINT;
+#endif
+
 static int idares(BoutReal t, N_Vector u, N_Vector du, N_Vector rr, void *user_data);
-static int ida_bbd_res(long int Nlocal, BoutReal t, 
+static int ida_bbd_res(IDAINT Nlocal, BoutReal t, 
 		       N_Vector u, N_Vector du, N_Vector rr, void *user_data);
 static int ida_pre(BoutReal t, N_Vector yy, 	 
 		   N_Vector yp, N_Vector rr, 	 
@@ -231,7 +235,7 @@ int IdaSolver::run() {
     }
     
     /// Write the restart file
-    restart.write("%s/BOUT.restart.%s", restartdir.c_str(), restartext.c_str());
+    restart.write();
     
     if((archive_restart > 0) && (iteration % archive_restart == 0)) {
       restart.write("%s/BOUT.restart_%04d.%s", restartdir.c_str(), iteration, restartext.c_str());
@@ -326,8 +330,7 @@ void IdaSolver::res(BoutReal t, BoutReal *udata, BoutReal *dudata, BoutReal *rda
  * Preconditioner function
  **************************************************************************/
 
-void IdaSolver::pre(BoutReal t, BoutReal cj, BoutReal delta, BoutReal *udata, BoutReal *rvec, BoutReal *zvec)
-{
+void IdaSolver::pre(BoutReal t, BoutReal cj, BoutReal delta, BoutReal *udata, BoutReal *rvec, BoutReal *zvec) {
 #ifdef CHECK
   int msg_point = msg_stack.push("Running preconditioner: IdaSolver::pre(%e)", t);
 #endif
@@ -351,8 +354,8 @@ void IdaSolver::pre(BoutReal t, BoutReal cj, BoutReal delta, BoutReal *udata, Bo
   
   (*prefunc)(t, cj, delta);
 
-  // Save the solution from vars
-  save_vars(zvec);
+  // Save the solution from F_vars
+  save_derivs(zvec);
 
   pre_Wtime += MPI_Wtime() - tstart;
   pre_ncalls++;
@@ -665,7 +668,7 @@ static int idares(BoutReal t,
 }
 
 /// Residual function for BBD preconditioner
-static int ida_bbd_res(long int Nlocal, BoutReal t, 
+static int ida_bbd_res(IDAINT Nlocal, BoutReal t, 
 		       N_Vector u, N_Vector du, N_Vector rr, 
 		       void *user_data)
 {

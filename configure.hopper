@@ -1,9 +1,7 @@
-module swap PrgEnv-pgi PrgEnv-gnu
-module load netcdf
-module swap netcdf netcdf/4.1.3
-module swap gcc gcc/4.6.3
-./configure MPICC=cc MPICXX=CC --with-fftw=/opt/fftw/3.2.2.1 --with-pdb=/global/homes/u/umansky/PUBLIC/PACT_HOPP2/pact
 
+setenv PETSC_DIR /global/homes/c/chma/hopper/install/petsc-3.3-p7
+setenv PETSC_ARCH arch-linux2-cxx-debug
+./configure MPICC=cc MPICXX=CC --with-netcdf=/global/homes/c/chma/hopper/local --with-fftw=/global/homes/c/chma/hopper/local --with-petsc --with-mumps --with-sundials=/global/homes/c/chma/edison/local
 
 #module swap PrgEnv-pgi PrgEnv-gnu
 #module load netcdf

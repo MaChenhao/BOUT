@@ -114,7 +114,7 @@ int RK4Solver::run() {
         }
         if(adaptive) {
           // Take two half-steps
-          output << simtime << ", " << timestep << ", " << dt << endl;
+          //output << simtime << ", " << timestep << ", " << dt << endl;
           take_step(simtime,          0.5*dt, f0, f1);
           take_step(simtime + 0.5*dt, 0.5*dt, f1, f2);
           

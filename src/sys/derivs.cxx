@@ -248,6 +248,12 @@ BoutReal DDX_CWENO3(stencil &f) {
   return VDDX_WENO3(vp, sp) + VDDX_WENO3(vm, sm);
 }
 
+
+BoutReal VDDX_PPM(stencil &v, stencil &f) {
+
+   return 0;
+
+}
 //////////////////////// FLUX METHODS ///////////////////////
 
 BoutReal FDDX_U1(stencil &v, stencil &f) {
@@ -436,6 +442,7 @@ static DiffNameLookup DiffNameTable[] = { {DIFF_U1, "U1", "First order upwinding
 					  {DIFF_FFT, "FFT", "FFT"},
                                           {DIFF_NND, "NND", "NND"},
                                           {DIFF_SPLIT, "SPLIT", "Split into upwind and central"},
+					  {DIFF_PPM, "PPM", "Piecewise Parabolic Method"},
 					  {DIFF_DEFAULT}}; // Use to terminate the list
 
 /// First derivative lookup table
@@ -459,6 +466,7 @@ static DiffLookup UpwindTable[] = { {DIFF_U1, NULL, VDDX_U1},
 				    {DIFF_U4, NULL, VDDX_U4},
 				    {DIFF_W3, NULL, VDDX_WENO3},
 				    {DIFF_C4, NULL, VDDX_C4},
+				    {DIFF_PPM, NULL, VDDX_PPM},
 				    {DIFF_DEFAULT}};
 
 /// Flux functions lookup table
@@ -1839,6 +1847,122 @@ const Field2D VDDX(const Field2D &v, const Field2D &f, DIFF_METHOD method) {
   return VDDX(v, f, CELL_DEFAULT, method);
 }
 
+#define MIN(X, Y) (((X)<(Y))?(X):(Y))
+#define MAX(X, Y) (((X)>(Y))?(X):(Y))
+#define SIGN(X) (((X)>0)?1:-1)
+#define SQR(x) ((x)*(x))
+#define C 1.25
+
+Field3D ext_X(const Field &b, BoutReal dt, const Field &v)
+{
+   rvec a6, ap, am, f, a2;
+   rvec a, u;
+   Field3D ddta;
+   int x, y, z, j;
+   BoutReal sigma, D2a, D2aC, D2aL, D2aR, D2alim, s;
+   BoutReal alphap, alpham, deltaf, deltaa;
+   BoutReal h;
+
+   a6.resize(mesh->ngx);
+   ap.resize(mesh->ngx);
+   am.resize(mesh->ngx);
+   f.resize(mesh->ngx);
+   a2.resize(mesh->ngx);
+
+   ddta.allocate();
+   ddta = 0;
+
+   for(y=mesh->ystart; y<=mesh->yend; y++)
+      for(z=0; z<mesh->ngz; z++)
+      {
+         b.getXArray(y, z, a);
+         v.getXArray(y, z, u);
+         for(x=mesh->xstart-2; x<=mesh->xend+1; x++)
+         {
+            h = mesh->dx[x][y];
+            a2[x] = 37. / 60. * (a[x] + a[x+1]) - 2. / 15. * (a[x-1] + a[x+2]) + 1. / 60. * (a[x-2] + a[x+3]);
+
+            if(!(a2[x] >= MIN(a[x],a[x+1]) && a2[x] <= MAX(a[x],a[x+1])))
+            {
+               D2a = 3 / SQR(h) * (a[x] - 2 * a2[x] + a[x+1]);
+               D2aL = 1 / SQR(h) * (a[x-1] - 2 * a[x] + a[x+1]);
+               D2aR = 1 / SQR(h) * (a[x] - 2 * a[x+1] + a[x+2]);
+               if((D2a * D2aL > 0) && (D2a * D2aR > 0))
+               {
+                  s = SIGN(D2a);
+                  D2alim = s * MIN(C * MIN(fabs(D2aL), fabs(D2aR)), fabs(D2a));
+               }
+               else
+                  D2alim = 0;
+               a2[x] = 0.5 * (a[x] + a[x+1]) - SQR(h) / 3 * D2alim;
+            }
+         }
+
+         for(x=mesh->xstart-1; x<=mesh->xend+1; x++)
+         {
+            ap[x] = a2[x];
+            am[x] = a2[x-1];
+
+            if((ap[x]-a[x])*(a[x]-am[x])<=0 && (a[x-1]-a[x])*(a[x]-a[x+1])<=0)
+            {
+               D2a = - 2 / SQR(h) * (6 * a[x] - 3 * (ap[x] + am[x]));
+               D2aC = 1 / SQR(h) * (a[x-1] - 2 * a[x] + a[x+1]);
+               D2aL = 1 / SQR(h) * (a[x-2] - 2 * a[x-1] + a[x]);
+               D2aR = 1 / SQR(h) * (a[x] - 2 * a[x+1] + a[x+2]);
+               if(D2a * D2aC > 0 && D2a * D2aL > 0 && D2a * D2aR > 0)
+               {
+                  s = SIGN(D2a);
+                  D2alim = s * MIN(C * MIN(fabs(D2aL), fabs(D2aR)), MIN(C*fabs(D2aC), fabs(D2a)));
+               }
+               else
+                  D2alim = 0;
+               ap[x] = a[x] + (ap[x] - a[x]) * D2alim / D2a;
+               am[x] = a[x] + (am[x] - a[x]) * D2alim / D2a;
+            }
+            else
+            {
+               s = SIGN(a[x+1] - a[x-1]);
+               alphap = ap[x] - a[x];
+               alpham = am[x] - a[x];
+               if(fabs(alphap) >= 2 * fabs(alpham))
+               {
+                  deltaf = -SQR(alphap) / (4 * (alphap + alpham));
+                  deltaa = a[x+1] - a[x];
+                  if(deltaf >= s * deltaa)
+                  {
+                     ap[x] = a[x] - (2 * deltaa + 2 * s * sqrt(fabs(SQR(deltaa) - deltaa * alpham)));
+                  }
+               }
+               else if(fabs(alpham) >= 2 * fabs(alphap))
+               {
+                  deltaf = -SQR(alpham) / (4 * (alphap + alpham));
+                  deltaa = a[x-1] - a[x];
+                  if(deltaf >= s * deltaa)
+                  {
+                     am[x] = a[x] - (2 * deltaa + 2 * s * sqrt(fabs(SQR(deltaa) - deltaa * alphap)));
+                  }
+               }
+            }
+
+            a6[x] = 6 * a[x] - 3 * (ap[x] + am[x]);
+            sigma = u[x] * dt / mesh->dx[x][y];
+            if(u[x] >= 0)
+               f[x] = ap[x] - sigma / 2. * (ap[x] - am[x] - (1. - 2. /3. * sigma) * a6[x]);
+            else if(u[x-1] < 0)
+               f[x-1] = am[x] + sigma / 2. * (ap[x] - am[x] + (1. - 2. /3. * sigma) * a6[x]);
+         }
+         for(x=mesh->xstart; x<=mesh->xend; x++)
+            a[x] = u[x] / mesh->dx[x][y] * (f[x-1] - f[x]);
+         for(x=0; x<mesh->ystart; x++)
+            a[x] = 0;
+         for(x=mesh->yend+1; x<mesh->ngy; x++)
+            a[x] = 0;
+         ddta.setXArray(y, z, a);
+      }
+
+   return -ddta;   
+}
+
 /// General version for 2 or 3-D objects
 const Field3D VDDX(const Field &v, const Field &f, CELL_LOC outloc, DIFF_METHOD method) {
   upwind_func func = fVDDX;
@@ -1941,12 +2065,19 @@ const Field3D VDDX(const Field &v, const Field &f, CELL_LOC outloc, DIFF_METHOD 
 #else
   // Serial version
   stencil vval, fval;
-  do {
-    vp->setXStencil(vval, bx, diffloc);
-    fp->setXStencil(fval, bx); // Location is always the same as input
-    
-    d[bx.jx][bx.jy][bx.jz] = func(vval, fval) / mesh->dx(bx.jx, bx.jy);
-  }while(next_index3(&bx));
+  if(func == VDDX_PPM)
+  {
+     result = ext_X(f, 0, v); 
+  }
+  else
+  {
+     do {
+        vp->setXStencil(vval, bx, diffloc);
+        fp->setXStencil(fval, bx); // Location is always the same as input
+
+        d[bx.jx][bx.jy][bx.jz] = func(vval, fval) / mesh->dx(bx.jx, bx.jy);
+     }while(next_index3(&bx));
+  }
 #endif
   
   if(mesh->ShiftXderivs && (mesh->ShiftOrder == 0))
@@ -2043,6 +2174,249 @@ const Field2D VDDY(const Field2D &v, const Field2D &f, DIFF_METHOD method) {
   return VDDY(v, f, CELL_DEFAULT, method);
 }
 
+
+Field3D ext_Y(const Field &b, BoutReal dt, const Field &v)
+{
+   rvec a6, ap, am, f, a2;
+   rvec a, u;
+   Field3D ddta;
+   int x, y, z, j;
+   BoutReal sigma, D2a, D2aC, D2aL, D2aR, D2alim, s;
+   BoutReal alphap, alpham, deltaf, deltaa;
+   BoutReal h;
+
+   a6.resize(mesh->ngy);
+   ap.resize(mesh->ngy);
+   am.resize(mesh->ngy);
+   f.resize(mesh->ngy);
+   a2.resize(mesh->ngy);
+
+   ddta.allocate();
+   ddta = 0;
+
+   for(x=mesh->xstart; x<=mesh->xend; x++)
+      for(z=0; z<mesh->ngz; z++)
+      {
+         b.getYArray(x, z, a);
+         v.getYArray(x, z, u);
+         for(y=mesh->ystart-2; y<=mesh->yend+1; y++)
+         {
+            h = mesh->dy[x][y];
+            a2[y] = 37. / 60. * (a[y] + a[y+1]) - 2. / 15. * (a[y-1] + a[y+2]) + 1. / 60. * (a[y-2] + a[y+3]);
+
+            if(!(a2[y] >= MIN(a[y],a[y+1]) && a2[y] <= MAX(a[y],a[y+1])))
+            {
+               D2a = 3 / SQR(h) * (a[y] - 2 * a2[y] + a[y+1]);
+               D2aL = 1 / SQR(h) * (a[y-1] - 2 * a[y] + a[y+1]);
+               D2aR = 1 / SQR(h) * (a[y] - 2 * a[y+1] + a[y+2]);
+               if((D2a * D2aL > 0) && (D2a * D2aR > 0))
+               {
+                  s = SIGN(D2a);
+                  D2alim = s * MIN(C * MIN(fabs(D2aL), fabs(D2aR)), fabs(D2a));
+               }
+               else
+                  D2alim = 0;
+               a2[y] = 0.5 * (a[y] + a[y+1]) - SQR(h) / 3 * D2alim;
+            }
+         }
+
+         for(y=mesh->ystart-1; y<=mesh->yend+1; y++)
+         {
+            ap[y] = a2[y];
+               am[y] = a2[y-1];
+
+            if((ap[y]-a[y])*(a[y]-am[y])<=0 && (a[y-1]-a[y])*(a[y]-a[y+1])<=0)
+            {
+               D2a = - 2 / SQR(h) * (6 * a[y] - 3 * (ap[y] + am[y]));
+               D2aC = 1 / SQR(h) * (a[y-1] - 2 * a[y] + a[y+1]);
+               D2aL = 1 / SQR(h) * (a[y-2] - 2 * a[y-1] + a[y]);
+               D2aR = 1 / SQR(h) * (a[y] - 2 * a[y+1] + a[y+2]);
+               if(D2a * D2aC > 0 && D2a * D2aL > 0 && D2a * D2aR > 0)
+               {
+                  s = SIGN(D2a);
+                  D2alim = s * MIN(C * MIN(fabs(D2aL), fabs(D2aR)), MIN(C*fabs(D2aC), fabs(D2a)));
+               }
+               else
+                  D2alim = 0;
+               ap[y] = a[y] + (ap[y] - a[y]) * D2alim / D2a;
+               am[y] = a[y] + (am[y] - a[y]) * D2alim / D2a;
+            }
+            else
+            {
+               s = SIGN(a[y+1] - a[y-1]);
+               alphap = ap[y] - a[y];
+               alpham = am[y] - a[y];
+               if(fabs(alphap) >= 2 * fabs(alpham))
+               {
+                  deltaf = -SQR(alphap) / (4 * (alphap + alpham));
+                  deltaa = a[y+1] - a[y];
+                  if(deltaf >= s * deltaa)
+                  {
+                     ap[y] = a[y] - (2 * deltaa + 2 * s * sqrt(fabs(SQR(deltaa) - deltaa * alpham)));
+                  }
+               }
+               else if(fabs(alpham) >= 2 * fabs(alphap))
+               {
+                  deltaf = -SQR(alpham) / (4 * (alphap + alpham));
+                  deltaa = a[y-1] - a[y];
+                  if(deltaf >= s * deltaa)
+                  {
+                     am[y] = a[y] - (2 * deltaa + 2 * s * sqrt(fabs(SQR(deltaa) - deltaa * alphap)));
+                  }
+               }
+            }
+
+            a6[y] = 6 * a[y] - 3 * (ap[y] + am[y]);
+            sigma = u[y] * dt / mesh->dy[x][y];
+            if(u[y] >= 0)
+               f[y] = ap[y] - sigma / 2. * (ap[y] - am[y] - (1. - 2. /3. * sigma) * a6[y]);
+            else if(u[y-1] < 0)
+               f[y-1] = am[y] + sigma / 2. * (ap[y] - am[y] + (1. - 2. /3. * sigma) * a6[y]);
+         }
+         for(y=mesh->ystart; y<=mesh->yend; y++)
+            a[y] = u[y] / mesh->dy[x][y] * (f[y-1] - f[y]);
+         for(y=0; y<mesh->ystart; y++)
+            a[y] = 0;
+         for(y=mesh->yend+1; y<mesh->ngy; y++)
+            a[y] = 0;
+         ddta.setYArray(x, z, a);
+      }
+
+   return -ddta;   
+}
+
+
+Field3D ext_Z(const Field &b, BoutReal dt, const Field &v)
+{
+   rvec a6, ap, am, f, a2, ta, tu;
+   rvec a, u;
+   Field3D ddta;
+   int x, y, z, j;
+   BoutReal sigma, D2a, D2aC, D2aL, D2aR, D2alim, s;
+   BoutReal alphap, alpham, deltaf, deltaa;
+   BoutReal h;
+   BoutReal zstart, zend;
+
+   a6.resize(mesh->ngz+8);
+   ap.resize(mesh->ngz+8);
+   am.resize(mesh->ngz+8);
+   f.resize(mesh->ngz+8);
+   a2.resize(mesh->ngz+8);
+   a.resize(mesh->ngz+8);
+   u.resize(mesh->ngz+8);
+   zstart = 4;
+   zend = mesh->ngz+3;
+
+   ddta.allocate();
+   ddta = 0;
+
+   for(x=mesh->xstart; x<=mesh->xend; x++)
+      for(y=mesh->ystart; y<mesh->yend; y++)
+      {
+         b.getZArray(x, y, ta);
+         v.getZArray(x, y, tu);
+         for(z=0; z<mesh->ngz; z++)
+         {
+            a[z+4] = ta[z];
+            u[z+4] = tu[z];
+         }
+         for(z=0; z<zstart; z++)
+         {
+            a[z] = a[z + mesh->ngz];
+            u[z] = u[z + mesh->ngz];
+         }
+         for(z=zend+1; z<mesh->ngz+8; z++)
+         {
+            a[z] = a[z - mesh->ngz];
+            u[z] = u[z - mesh->ngz];
+         }
+
+         for(z=zstart-2; z<=zstart+1; z++)
+         {
+            h = mesh->dz;
+            a2[z] = 37. / 60. * (a[z] + a[z+1]) - 2. / 15. * (a[z-1] + a[z+2]) + 1. / 60. * (a[z-2] + a[z+3]);
+
+            if(!(a2[z] >= MIN(a[z],a[z+1]) && a2[z] <= MAX(a[z],a[z+1])))
+            {
+               D2a = 3 / SQR(h) * (a[z] - 2 * a2[z] + a[z+1]);
+               D2aL = 1 / SQR(h) * (a[z-1] - 2 * a[z] + a[z+1]);
+               D2aR = 1 / SQR(h) * (a[z] - 2 * a[z+1] + a[z+2]);
+               if((D2a * D2aL > 0) && (D2a * D2aR > 0))
+               {
+                  s = SIGN(D2a);
+                  D2alim = s * MIN(C * MIN(fabs(D2aL), fabs(D2aR)), fabs(D2a));
+               }
+               else
+                  D2alim = 0;
+               a2[z] = 0.5 * (a[z] + a[z+1]) - SQR(h) / 3 * D2alim;
+            }
+         }
+
+         for(z=zstart-1; z<=zend+1; z++)
+         {
+            ap[z] = a2[z];
+            am[z] = a2[z-1];
+
+            if((ap[z]-a[z])*(a[z]-am[z])<=0 && (a[z-1]-a[z])*(a[z]-a[z+1])<=0)
+            {
+               D2a = - 2 / SQR(h) * (6 * a[z] - 3 * (ap[z] + am[z]));
+               D2aC = 1 / SQR(h) * (a[z-1] - 2 * a[z] + a[z+1]);
+               D2aL = 1 / SQR(h) * (a[z-2] - 2 * a[z-1] + a[z]);
+               D2aR = 1 / SQR(h) * (a[z] - 2 * a[z+1] + a[z+2]);
+               if(D2a * D2aC > 0 && D2a * D2aL > 0 && D2a * D2aR > 0)
+               {
+                  s = SIGN(D2a);
+                  D2alim = s * MIN(C * MIN(fabs(D2aL), fabs(D2aR)), MIN(C*fabs(D2aC), fabs(D2a)));
+               }
+               else
+                  D2alim = 0;
+               ap[z] = a[z] + (ap[z] - a[z]) * D2alim / D2a;
+               am[z] = a[z] + (am[z] - a[z]) * D2alim / D2a;
+            }
+            else
+            {
+               s = SIGN(a[z+1] - a[z-1]);
+               alphap = ap[z] - a[z];
+               alpham = am[z] - a[z];
+               if(fabs(alphap) >= 2 * fabs(alpham))
+               {
+                  deltaf = -SQR(alphap) / (4 * (alphap + alpham));
+                  deltaa = a[z+1] - a[z];
+                  if(deltaf >= s * deltaa)
+                  {
+                     ap[z] = a[z] - (2 * deltaa + 2 * s * sqrt(fabs(SQR(deltaa) - deltaa * alpham)));
+                  }
+               }
+               else if(fabs(alpham) >= 2 * fabs(alphap))
+               {
+                  deltaf = -SQR(alpham) / (4 * (alphap + alpham));
+                  deltaa = a[z-1] - a[z];
+                  if(deltaf >= s * deltaa)
+                  {
+                     am[z] = a[z] - (2 * deltaa + 2 * s * sqrt(fabs(SQR(deltaa) - deltaa * alphap)));
+                  }
+               }
+            }
+
+            a6[z] = 6 * a[z] - 3 * (ap[z] + am[z]);
+            sigma = u[z] * dt / mesh->dz;
+            if(u[z] >= 0)
+               f[z] = ap[z] - sigma / 2. * (ap[z] - am[z] - (1. - 2. /3. * sigma) * a6[z]);
+            else if(u[z-1] < 0)
+               f[z-1] = am[z] + sigma / 2. * (ap[z] - am[z] + (1. - 2. /3. * sigma) * a6[z]);
+         }
+         for(z=zstart; z<=zend; z++)
+            a[z] = u[z] / mesh->dz * (f[z-1] - f[z]);
+         for(z=0; z<zstart; z++)
+            a[z] = 0;
+         for(z=zend+1; z<mesh->ngz+8; z++)
+            a[z] = 0;
+         ddta.setZArray(x, y, a);
+      }
+
+   return -ddta;   
+}
+
 // general case
 const Field3D VDDY(const Field &v, const Field &f, CELL_LOC outloc, DIFF_METHOD method) {
   upwind_func func = fVDDY;
@@ -2136,12 +2510,19 @@ const Field3D VDDY(const Field &v, const Field &f, CELL_LOC outloc, DIFF_METHOD 
 #else
   // Serial version
   stencil vval, fval;
-  do {
-    v.setYStencil(vval, bx, diffloc);
-    f.setYStencil(fval, bx);
-    
-    d[bx.jx][bx.jy][bx.jz] = func(vval, fval)/mesh->dy(bx.jx, bx.jy);
-  }while(next_index3(&bx));
+  if(func == VDDX_PPM)
+  {
+     result = ext_Y(f, 0, v); 
+  }
+  else
+  {
+     do {
+        v.setYStencil(vval, bx, diffloc);
+        f.setYStencil(fval, bx);
+
+        d[bx.jx][bx.jy][bx.jz] = func(vval, fval)/mesh->dy(bx.jx, bx.jy);
+     }while(next_index3(&bx));
+  }
 #endif
   
   result.setLocation(inloc);
@@ -2267,12 +2648,19 @@ const Field3D VDDZ(const Field &v, const Field &f, CELL_LOC outloc, DIFF_METHOD 
   }
 #else 
   stencil vval, fval;
-  do {
-    v.setZStencil(vval, bx, diffloc);
-    f.setZStencil(fval, bx);
-    
-    d[bx.jx][bx.jy][bx.jz] = func(vval, fval)/mesh->dz;
-  }while(next_index3(&bx));
+  if(func == VDDX_PPM)
+  {
+     result = ext_Z(f, 0, v); 
+  }
+  else
+  {
+     do {
+        v.setZStencil(vval, bx, diffloc);
+        f.setZStencil(fval, bx);
+
+        d[bx.jx][bx.jy][bx.jz] = func(vval, fval)/mesh->dz;
+     }while(next_index3(&bx));
+  }
 #endif
 
   result.setLocation(inloc);

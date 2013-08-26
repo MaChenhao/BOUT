@@ -1,9 +1,7 @@
 
-module swap PrgEnv-intel PrgEnv-gnu
-module load fftw
-./configure MPICC=cc MPICXX=CC --with-netcdf=/global/u2/c/chma/PUBLIC/netcdf_edison/netcdf --with-fftw=/opt/fftw/3.3.0.1/x86_64
-
-
+setenv PETSC_DIR /global/homes/c/chma/edison/install/petsc-3.3-p7
+setenv PETSC_ARCH arch-linux2-cxx-debug
+./configure MPICC=cc MPICXX=CC --with-netcdf=/global/homes/c/chma/edison/local --with-fftw=/global/homes/c/chma/edison/local --with-petsc --with-mumps --with-sundials=/global/homes/c/chma/edison/local
 
 #module swap PrgEnv-pgi PrgEnv-gnu
 #module load netcdf

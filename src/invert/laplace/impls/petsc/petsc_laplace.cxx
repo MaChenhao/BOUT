@@ -3,7 +3,11 @@
  *                           Using PETSc Solvers
  *
  **************************************************************************
+<<<<<<< Updated upstream:src/invert/laplace/impls/petsc/petsc_laplace.cxx
  * Copyright 2013 J. Buchanan, J.Omotani
+=======
+ * Copyright 2013 J. Buchan
+>>>>>>> Stashed changes:src/invert/laplace/impls/petsc/petsc_laplace.cxx
  *
  * Contact: Ben Dudson, bd512@york.ac.uk
  * 
@@ -23,9 +27,11 @@
  * along with BOUT++.  If not, see <http://www.gnu.org/licenses/>.
  *
  **************************************************************************/
-#ifdef BOUT_HAS_PETSC_3_3
+#ifdef BOUT_HAS_PETSC
 
 #include "petsc_laplace.hxx"
+
+//#ifdef BOUT_HAS_PETSC_3_3
 
 #include <bout/sys/timer.hxx>
 #include <boutcomm.hxx>
@@ -343,6 +349,11 @@ LaplacePetsc::LaplacePetsc(Options *opt) :
     {
       output << endl << "Using LU decompostion for direct solution of system" << endl << endl;
     }
+<<<<<<< Updated upstream:src/invert/laplace/impls/petsc/petsc_laplace.cxx
+=======
+  opts->get("method", method, "petsc");
+  output.write("Using %s method for solution of system\n", method.c_str());
+>>>>>>> Stashed changes:src/invert/laplace/impls/petsc/petsc_laplace.cxx
   
   // Ensure that the matrix is constructed first time
 //   coefchanged = true;
@@ -354,6 +365,7 @@ const FieldPerp LaplacePetsc::solve(const FieldPerp &b) {
 }
 
 const FieldPerp LaplacePetsc::solve(const FieldPerp &b, const FieldPerp &x0) {
+<<<<<<< Updated upstream:src/invert/laplace/impls/petsc/petsc_laplace.cxx
   #ifdef CHECK
     if ( flags & !implemented_flags) {
       if (flags&INVERT_4TH_ORDER) output<<"For PETSc based Laplacian inverter, use 'fourth_order=true' instead of setting INVERT_4TH_ORDER flag"<<endl;
@@ -767,6 +779,427 @@ const FieldPerp LaplacePetsc::solve(const FieldPerp &b, const FieldPerp &x0) {
   }
 
   return sol;
+=======
+#ifdef CHECK
+   if ( flags & !implemented_flags) {
+      if (flags&INVERT_4TH_ORDER) output<<"For PETSc based Laplacian inverter, use 'fourth_order=true' instead of setting INVERT_4TH_ORDER flag"<<endl;
+      throw BoutException("Attempted to set Laplacian inversion flag that is not implemented in petsc_laplace.cxx");
+   }
+#endif
+
+   int y = b.getIndex();           // Get the Y index
+   sol.setIndex(y);// Initialize the solution field.
+   sol = 0.;
+
+   // Determine which row/columns of the matrix are locally owned
+   MatGetOwnershipRange( MatA, &Istart, &Iend );
+
+   int i = Istart;
+   { Timer timer("petscsetup");
+
+      //     if ((fourth_order) && !(lastflag&INVERT_4TH_ORDER)) throw BoutException("Should not change INVERT_4TH_ORDER flag in LaplacePetsc: 2nd order and 4th order require different pre-allocation to optimize PETSc solver");
+
+      // Set Matrix Elements
+
+      // Loop over locally owned rows of matrix A - i labels NODE POINT from bottom left (0,0) = 0 to top right (meshx-1,meshz-1) = meshx*meshz-1
+      // i increments by 1 for an increase of 1 in Z and by meshz for an increase of 1 in X.
+
+      // X=0 to mesh->xstart-1 defines the boundary region of the domain.
+      if( mesh->firstX() ) 
+      {
+         for(int x=0; x<mesh->xstart; x++)
+         {
+            for(int z=0; z<mesh->ngz-1; z++) 
+            {
+               PetscScalar val;
+               // Set values corresponding to nodes adjacent in x if Neumann Boundary Conditions are required.
+               if(flags & INVERT_AC_IN_GRAD) 
+               {
+                  if( fourth_order )
+                  {
+                     // Fourth Order Accuracy on Boundary
+                     Element(i,x,z, 0, 0, -25.0 / (12.0*mesh->dx[x][y]), MatA ); 
+                     Element(i,x,z, 1, 0,   4.0 / mesh->dx[x][y], MatA ); 
+                     Element(i,x,z, 2, 0,  -3.0 / mesh->dx[x][y], MatA );
+                     Element(i,x,z, 3, 0,   4.0 / (3.0*mesh->dx[x][y]), MatA ); 
+                     Element(i,x,z, 4, 0,  -1.0 / (4.0*mesh->dx[x][y]), MatA );
+                  }
+                  else
+                  {
+                     // Second Order Accuracy on Boundary
+                     Element(i,x,z, 0, 0, -3.0 / (2.0*mesh->dx[x][y]), MatA ); 
+                     Element(i,x,z, 1, 0,  2.0 / mesh->dx[x][y], MatA ); 
+                     Element(i,x,z, 2, 0, -1.0 / (2.0*mesh->dx[x][y]), MatA ); 
+                     // 			Element(i,x,z, 3, 0, 0.0, MatA );  // Reset these elements to 0 in case 4th order flag was used previously: not allowed now
+                     // 			Element(i,x,z, 4, 0, 0.0, MatA );
+                  }
+               }
+               else
+               {
+                  // Set Diagonal Values to 1
+                  val = 1;
+                  Element(i,x,z, 0, 0, val, MatA );
+
+                  // Set off diagonal elements to zero
+                  Element(i,x,z, 1, 0, 0.0, MatA );
+                  Element(i,x,z, 2, 0, 0.0, MatA );
+                  Element(i,x,z, 3, 0, 0.0, MatA );
+                  Element(i,x,z, 4, 0, 0.0, MatA );
+               }
+
+               // Set Components of RHS and trial solution
+               val=0;
+               if( flags & INVERT_IN_RHS )         val = b[x][z];
+               else if( flags & INVERT_IN_SET )    val = x0[x][z];
+               VecSetValues( bs, 1, &i, &val, INSERT_VALUES );
+
+               val = x0[x][z];
+               VecSetValues( xs, 1, &i, &val, INSERT_VALUES );
+
+               i++; // Increment row in Petsc matrix
+            }
+         }
+      }
+
+      // Main domain with Laplacian operator
+      for(int x=mesh->xstart; x <= mesh->xend; x++)
+      {
+         for(int z=0; z<mesh->ngz-1; z++) 
+         {
+            BoutReal A0, A1, A2, A3, A4, A5;
+            A0 = A[x][y][z];
+            Coeffs( x, y, z, A1, A2, A3, A4, A5 );
+
+            BoutReal dx   = mesh->dx[x][y];
+            BoutReal dx2  = pow( mesh->dx[x][y] , 2.0 );
+            BoutReal dz   = mesh->dz;
+            BoutReal dz2  = pow( mesh->dz, 2.0 );
+            BoutReal dxdz = mesh->dx[x][y] * mesh->dz;
+
+            // Set Matrix Elements
+            PetscScalar val=0.;
+            if (fourth_order) {
+               // f(i,j) = f(x,z)
+               val = A0 - (5.0/2.0)*( (A1 / dx2) + (A2 / dz2) );
+               Element(i,x,z, 0, 0, val, MatA );
+
+               // f(i-2,j-2)
+               val = A3 / ( 144.0 * dxdz );
+               Element(i,x,z, -2, -2, val, MatA ); 
+
+               // f(i-2,j-1)
+               val = -1.0 * A3 / ( 18.0 * dxdz );
+               Element(i,x,z, -2, -1, val, MatA );
+
+               // f(i-2,j)
+               val = (1.0/12.0) * ( (-1.0 * A1 /  dx2 ) + (A4 / dx) ); 
+               Element(i,x,z, -2, 0, val, MatA );
+
+               // f(i-2,j+1)
+               val = A3 / ( 18.0 * dxdz );
+               Element(i,x,z, -2, 1, val, MatA );
+
+               // f(i-2,j+2)
+               val = -1.0 * A3 / ( 144.0 * dxdz );
+               Element(i,x,z, -2, 2, val, MatA ); 
+
+               // f(i-1,j-2)
+               val = -1.0 * A3 / ( 18.0 * dxdz );
+               Element(i,x,z, -1, -2, val, MatA );
+
+               // f(i-1,j-1)
+               val = 4.0 * A3 / ( 9.0 * dxdz ); 
+               Element(i,x,z, -1, -1, val, MatA ); 
+
+               // f(i-1,j)
+               val = ( 4.0 * A1 / ( 3.0 * dx2 ) ) - ( 2.0 * A4 / ( 3.0 * dx ) );
+               Element(i,x,z, -1, 0, val, MatA );
+
+               // f(i-1,j+1)
+               val = -4.0 * A3 / ( 9.0 * dxdz ); 
+               Element(i,x,z, -1, 1, val, MatA );
+
+               // f(i-1,j+2)
+               val = A3 / ( 18.0 * dxdz );
+               Element(i,x,z, -1, 2, val, MatA );
+
+               // f(i,j-2)
+               val = (1.0/12.0) * ( ( -1.0 * A2 / dz2 ) + ( A5 / dz ) ); 
+               Element(i,x,z, 0, -2, val, MatA );
+
+               // f(i,j-1)
+               val = ( 4.0 * A2 / ( 3.0 * dz2 ) ) - ( 2.0 * A5 / ( 3.0 * dz ) );
+               Element(i,x,z, 0, -1, val, MatA ); 
+
+               // f(i,j+1)
+               val = ( 4.0 * A2 / ( 3.0 * dz2 ) ) + ( 2.0 * A5 / ( 3.0 * dz ) );
+               Element(i,x,z, 0, 1, val, MatA );
+
+               // f(i,j+2)
+               val = (-1.0/12.0) * ( ( A2 / dz2 ) + ( A5 / dz ) ); 
+               Element(i,x,z, 0, 2, val, MatA );
+
+               // f(i+1,j-2)
+               val = A3 / ( 18.0 * dxdz );
+               Element(i,x,z, 1, -2, val, MatA );
+
+               // f(i+1,j-1)
+               val = -4.0 * A3 / ( 9.0 * dxdz );
+               Element(i,x,z, 1, -1, val, MatA );
+
+               // f(i+1,j)
+               val = ( 4.0 * A1 / ( 3.0*dx2 ) ) + ( 2.0 * A4 / ( 3.0 * dx ) ); 
+               Element(i,x,z, 1, 0, val, MatA );
+
+               // f(i+1,j+1)
+               val = 4.0 * A3 / ( 9.0 * dxdz ); 
+               Element(i,x,z, 1, 1, val, MatA );
+
+               // f(i+1,j+2)
+               val = -1.0 * A3 / ( 18.0 * dxdz );
+               Element(i,x,z, 1, 2, val, MatA );
+
+               // f(i+2,j-2)
+               val = -1.0 * A3 / ( 144.0 * dxdz );
+               Element(i,x,z, 2, -2, val, MatA ); 
+
+               // f(i+2,j-1)
+               val = A3 / ( 18.0 * dxdz );
+               Element(i,x,z, 2, -1, val, MatA );
+
+               // f(i+2,j)
+               val = (-1.0/12.0) * ( (A1 / dx2) + (A4 / dx) ); 
+               Element(i,x,z, 2, 0, val, MatA );
+
+               // f(i+2,j+1)
+               val = -1.0 * A3 / ( 18.0 * dxdz );
+               Element(i,x,z, 2, 1, val, MatA );
+
+               // f(i+2,j+2)
+               val = A3 / ( 144.0 * dxdz );
+               Element(i,x,z, 2, 2, val, MatA ); 
+            }
+            else {
+               // f(i,j) = f(x,z)
+               val = A0 - 2.0*( (A1 / dx2) + (A2 / dz2) ); 
+               Element(i,x,z, 0, 0, val, MatA );
+
+               // f(i-1,j-1)
+               val = A3 / (4.0 * dxdz); 
+               Element(i,x,z, -1, -1, val, MatA ); 
+
+               // f(i-1,j)
+               val = ( A1 / dx2 ) - A4 / ( 2.0 * dx ); 
+               Element(i,x,z, -1, 0, val, MatA );
+
+               // f(i-1,j+1)
+               val = -1.0 * A3 / ( 4.0 * dxdz ); 
+               Element(i,x,z, -1, 1, val, MatA );
+
+               // f(i,j-1)
+               val = ( A2 / dz2 ) - ( A5 / ( 2.0 * dz ) ); 
+               Element(i,x,z, 0, -1, val, MatA ); 
+
+               // f(i,j+1)
+               val = ( A2 / dz2 ) + ( A5 / ( 2.0 * dz ) ); 
+               Element(i,x,z, 0, 1, val, MatA );
+
+               // f(i+1,j-1)
+               val = -1.0 * A3 / ( 4.0 * dxdz ); 
+               Element(i,x,z, 1, -1, val, MatA );
+
+               // f(i+1,j)
+               val = ( A1 / dx2 ) + ( A4 / ( 2.0 * dx ) ); 
+               Element(i,x,z, 1, 0, val, MatA );
+
+               // f(i+1,j+1)
+               val = A3 / ( 4.0 * dxdz ); 
+               Element(i,x,z, 1, 1, val, MatA );
+            }
+            // Set Components of RHS Vector
+            val  = b[x][z];
+            VecSetValues( bs, 1, &i, &val, INSERT_VALUES );
+
+            // Set Components of Trial Solution Vector
+            val = x0[x][z];
+            VecSetValues( xs, 1, &i, &val, INSERT_VALUES ); 
+            i++;
+         }
+      }
+
+      // X=mesh->xend+1 to mesh->ngx-1 defines the upper boundary region of the domain.
+      if( mesh->lastX() ) 
+      {
+         for(int x=mesh->xend+1; x<mesh->ngx; x++)
+         {
+            for(int z=0; z<mesh->ngz-1; z++) 
+            {
+               // Set Diagonal Values to 1
+               PetscScalar val = 1;
+               Element(i,x,z, 0, 0, val, MatA ); 
+
+               // Set values corresponding to nodes adjacent in x if Neumann Boundary Conditions are required.
+               if(flags & INVERT_AC_OUT_GRAD) 
+               {
+                  if( fourth_order )
+                  {
+                     // Fourth Order Accuracy on Boundary
+                     Element(i,x,z,  0, 0, 25.0 / (12.0*mesh->dx[x][y]), MatA ); 
+                     Element(i,x,z, -1, 0, -4.0 / mesh->dx[x][y], MatA ); 
+                     Element(i,x,z, -2, 0,  3.0 / mesh->dx[x][y], MatA );
+                     Element(i,x,z, -3, 0, -4.0 / (3.0*mesh->dx[x][y]), MatA ); 
+                     Element(i,x,z, -4, 0,  1.0 / (4.0*mesh->dx[x][y]), MatA );
+                  }
+                  else
+                  {
+                     // Second Order Accuracy on Boundary
+                     Element(i,x,z,  0, 0,  3.0 / (2.0*mesh->dx[x][y]), MatA ); 
+                     Element(i,x,z, -1, 0, -2.0 / mesh->dx[x][y], MatA ); 
+                     Element(i,x,z, -2, 0,  1.0 / (2.0*mesh->dx[x][y]), MatA ); 
+                     // 			Element(i,x,z, -3, 0,  0.0, MatA );  // Reset these elements to 0 in case 4th order flag was used previously: not allowed now
+                     // 			Element(i,x,z, -4, 0,  0.0, MatA );
+                  }
+               }
+               else
+               {
+                  // Set off diagonal elements to zero
+                  Element(i,x,z, -1, 0, 0.0, MatA );
+                  Element(i,x,z, -2, 0, 0.0, MatA );
+                  Element(i,x,z, -3, 0, 0.0, MatA );
+                  Element(i,x,z, -4, 0, 0.0, MatA );
+               }            
+
+               // Set Components of RHS
+               val=0;
+               if( flags & INVERT_OUT_RHS )        val = b[x][z];
+               else if( flags & INVERT_OUT_SET )   val = x0[x][z];
+               VecSetValues( bs, 1, &i, &val, INSERT_VALUES );
+
+               val = x0[x][z];
+               VecSetValues( xs, 1, &i, &val, INSERT_VALUES );
+
+               i++; // Increment row in Petsc matrix
+            }
+         }
+      }
+
+      if(i != Iend) {
+         throw BoutException("Petsc index sanity check failed");
+      }
+
+      // Assemble Matrix
+      MatAssemblyBegin( MatA, MAT_FINAL_ASSEMBLY );
+      MatAssemblyEnd( MatA, MAT_FINAL_ASSEMBLY );
+
+      // Record which flags were used for this matrix
+      lastflag = flags;
+
+      // Assemble RHS Vector
+      VecAssemblyBegin(bs);
+      VecAssemblyEnd(bs);
+
+      // Assemble Trial Solution Vector
+      VecAssemblyBegin(xs);
+      VecAssemblyEnd(xs);
+
+      // Configure Linear Solver               
+      KSPSetOperators( ksp,MatA,MatA,DIFFERENT_NONZERO_PATTERN );
+
+      PC pc;
+
+      if(method == "hypre")
+      {
+         KSPGetPC(ksp,&pc);
+         PCSetType(pc,PCHYPRE);
+         PCFactorSetMatSolverPackage(pc,"hypre");
+      }
+      else if(direct)
+      {
+         KSPGetPC(ksp,&pc);
+         PCSetType(pc,PCLU);
+         PCFactorSetMatSolverPackage(pc,"mumps");
+      }
+      else
+      {
+         KSPSetType( ksp, ksptype );
+
+         if( ksptype == KSPRICHARDSON )     KSPRichardsonSetScale( ksp, richardson_damping_factor );
+         else if( ksptype == KSPCHEBYSHEV ) KSPChebyshevSetEigenvalues( ksp, chebyshev_max, chebyshev_min );
+         else if( ksptype == KSPGMRES )     KSPGMRESSetRestart( ksp, gmres_max_steps );
+
+         KSPSetTolerances( ksp, rtol, atol, dtol, maxits );
+
+         //if( !( flags & INVERT_START_NEW ) ) KSPSetInitialGuessNonzero( ksp, (PetscBool) true );
+
+         KSPGetPC(ksp,&pc);
+         PCSetType(pc, pctype);
+
+         KSPSetFromOptions( ksp );           
+      }
+
+   }
+   { Timer timer("petscsolve");
+      // Solve the system
+      KSPSolve( ksp, bs, xs );
+   }
+
+   KSPConvergedReason reason;
+   KSPGetConvergedReason( ksp, &reason );
+   if (reason==-3) { // Too many iterations, might be fixed by taking smaller timestep
+      throw BoutIterationFail("petsc_laplace: too many iterations");
+   }
+   else if (reason<=0) {
+      output<<"KSPConvergedReason is "<<reason<<endl;
+      throw BoutException("petsc_laplace: inversion failed to converge.");
+   }
+
+   // Add data to FieldPerp Object
+   i = Istart;
+   if(mesh->firstX()) 
+   {
+      for(int x=0; x<mesh->xstart; x++)
+      {
+         for(int z=0; z<mesh->ngz-1; z++) 
+         {
+            PetscScalar val = 0;
+            VecGetValues(xs, 1, &i, &val ); 
+            sol[x][z] = val;
+            i++; // Increment row in Petsc matrix
+         }
+      }
+   }
+
+   for(int x=mesh->xstart; x <= mesh->xend; x++)
+   {
+      for(int z=0; z<mesh->ngz-1; z++) 
+      {
+         PetscScalar val = 0;
+         VecGetValues(xs, 1, &i, &val ); 
+         sol[x][z] = val;
+         i++; // Increment row in Petsc matrix
+      }
+   }
+
+   if(mesh->lastX()) 
+   {
+      for(int x=mesh->xend+1; x<mesh->ngx; x++)
+      {
+         for(int z=0;z < mesh->ngz-1; z++) 
+         {
+            PetscScalar val = 0;
+            VecGetValues(xs, 1, &i, &val ); 
+            sol[x][z] = val;
+            i++; // Increment row in Petsc matrix
+         }	
+      }
+   }
+
+   if(i != Iend) {
+      throw BoutException("Petsc index sanity check 2 failed");
+   }
+
+   return sol;
+>>>>>>> Stashed changes:src/invert/laplace/impls/petsc/petsc_laplace.cxx
 }
 
 void LaplacePetsc::Element(int i, int x, int z, int xshift, int zshift, PetscScalar ele, Mat &MatA ) 

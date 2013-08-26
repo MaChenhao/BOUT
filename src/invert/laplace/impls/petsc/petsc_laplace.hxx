@@ -1,3 +1,4 @@
+<<<<<<< Updated upstream:src/invert/laplace/impls/petsc/petsc_laplace.hxx
 /**************************************************************************
  * Perpendicular Laplacian inversion. 
  *                           Using PETSc Solvers
@@ -30,7 +31,7 @@ class LaplacePetsc;
 #ifndef __PETSC_LAPLACE_H__
 #define __PETSC_LAPLACE_H__
 
-#ifndef BOUT_HAS_PETSC_3_3
+#ifndef BOUT_HAS_PETSC
 
 #include <boutexception.hxx>
 #include <invert_laplace.hxx>
@@ -84,6 +85,7 @@ public:
   void setCoefD(const Field3D &val) { D = val; issetD = true; /*coefchanged = true;*/}
   void setCoefEx(const Field3D &val) { Ex = val; issetE = true; /*coefchanged = true;*/}
   void setCoefEz(const Field3D &val) { Ez = val; issetE = true; /*coefchanged = true;*/}
+<<<<<<< Updated upstream:src/invert/laplace/impls/petsc/petsc_laplace.hxx
   
   const FieldPerp solve(const FieldPerp &b);
   const FieldPerp solve(const FieldPerp &b, const FieldPerp &x0);
@@ -136,6 +138,6 @@ private:
   #endif
 };
 
-#endif //BOUT_HAS_PETSC_DEV
+#endif //BOUT_HAS_PETSC
 
 #endif //__PETSC_LAPLACE_H__

@@ -4,8 +4,8 @@
 ##################################################
 # Global settings used by the core code
 
-NOUT = 100          # number of time-steps
-TIMESTEP = 1       # time between outputs
+NOUT = 1000          # number of time-steps
+TIMESTEP = 2       # time between outputs
 archive = 20        # Archive restart files after this number of outputs
 wall_limit = 1.55  # wall time limit (in hours)
 
@@ -20,8 +20,8 @@ ZPERIOD = 15        # Fraction of a torus to simulate
 MXG = 2
 MYG = 2
 
-#grid = "data/cbm18_8_y064_x516_090309.nc"  # Grid file
-grid = "cbm18_dens8.grid_nx68ny64.nc"  # Grid file
+grid = "data/cbm18_8_y064_x516_090309.nc"  # Grid file
+#grid = "cbm18_dens8.grid_nx68ny64.nc"  # Grid file
 
 dump_format = "nc"      # Dump file format. "nc" = NetCDF, "pdb" = PDB
 restart_format = "nc"   # Restart file format
@@ -43,6 +43,8 @@ group_nonblock = false  # Use non-blocking group operations?
 # Laplacian inversion routines
 
 [laplace]
+type = mumps
+flags = 0
 
 # max_mode = 16  # Maximum N to solve for
 
@@ -79,6 +81,7 @@ upwind = W3
 
 [solver]
 
+type = pvode
 # mudq, mldq, mukeep, mlkeep preconditioner options
 ATOL = 1.0e-8 # absolute tolerance
 RTOL = 1.0e-5  # relative tolerance
@@ -113,9 +116,9 @@ include_curvature = true # include curvature drive term?
 compress = false       # set compressible (evolve Vpar)
 nonlinear  = false     # include non-linear terms?
 
-diamag = true         # Include diamagnetic effects?
+diamag = false         # Include diamagnetic effects?
 diamag_grad_t = false  # Include Grad_par(Te) term in Psi equation
-diamag_phi0 = true    # Balance ExB against Vd for stationary equilibrium
+diamag_phi0 = false    # Balance ExB against Vd for stationary equilibrium
 
 eHall = false         # Include electron pressue effects in Ohm's law?
 AA    = 2.0          # ion mass in units of proton mass 
@@ -162,9 +165,9 @@ vacuum_trans = 0.01   # transition width (fraction of P)
 
 ## Resistivity and Hyper-resistivity
 
-vac_lund = 1.0e8    # Lundquist number in vacuum  (negative -> infinity)
-core_lund = 1.0e8  # Lundquist number in core (negative -> infinity)
-hyperresist = 1.e-4 # Hyper-resistivity coefficient (like 1 / Lundquist number)
+vac_lund = -1.0e8    # Lundquist number in vacuum  (negative -> infinity)
+core_lund = -1.0e8  # Lundquist number in core (negative -> infinity)
+hyperresist = -1.e-4 # Hyper-resistivity coefficient (like 1 / Lundquist number)
 
 ## Inner boundary damping
 
@@ -174,9 +177,7 @@ damp_t_const = 1e-2  # Damping time constant
 ## Parallel pressure diffusion
 
 diffusion_par = -1.0e-0   # Parallel pressure diffusion (< 0 = none)
-diffusion_p4  = -1.0e-5   # parallel hyper-viscous diffusion for pressure (< 0 = none)
-diffusion_u4  = 1.0e-5    # parallel hyper-viscous diffusion for vorticity (< 0 = none)
-diffusion_a4  = -1.0e-5   # parallel hyper-viscous diffusion for vector potential (< 0 = none)
+diffusion_p4 = -1.0e-5     # 4th order Parallel pressure diffusion (< 0 = none)
 
 ## heat source in pressure in watts
  
@@ -192,18 +193,18 @@ sp_length = 0.15    #   sink length in percentage of nx (< 0 = none)
  
  
 ## left edge sink rate in vorticity
-sink_Ul = -1.0e1        #   left edge sink rate in vorticity (< 0 = none)
+sink_Ul = 1.0e1        #   left edge sink rate in vorticity (< 0 = none)
 su_widthl  = 0.06     #   left edge sink width, in percentage of nx (< 0 = none)
 su_lengthl = 0.1     #   left edge sink length in percentage of nx (< 0 = none)
  
 ## right edge sink rate in vorticity
-sink_Ur = -1.0e1        #   right edge sink rate in vorticity (< 0 = none)
+sink_Ur = 1.0e1        #   right edge sink rate in vorticity (< 0 = none)
 su_widthr  = 0.06     #   right edge sink width, in percentage of nx (< 0 = none)
 su_lengthr = 0.1     #   right edge sink length in percentage of nx (< 0 = none)
 
 ## Viscosity and Hyper-viscosity
 
-viscos_par = -0.1   # Parallel viscosity (< 0 = none)
+viscos_par = 0.1   # Parallel viscosity (< 0 = none)
 viscos_perp = -1.0  # Perpendicular
 hyperviscos = -1.0  # Radial hyper viscosity
 

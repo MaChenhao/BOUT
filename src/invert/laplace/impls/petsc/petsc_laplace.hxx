@@ -6,7 +6,7 @@
  * Equation solved is: d*\nabla^2_\perp x + (1/c1)\nabla_perp c2\cdot\nabla_\perp x + a x = b
  *
  **************************************************************************
- * Copyright 2013 J. Buchan
+ * Copyright 2013 J. Buchanan, J. Omotani
  *
  * Contact: Ben Dudson, bd512@york.ac.uk
  * 
@@ -85,7 +85,6 @@ public:
   void setCoefD(const Field3D &val) { D = val; issetD = true; /*coefchanged = true;*/}
   void setCoefEx(const Field3D &val) { Ex = val; issetE = true; /*coefchanged = true;*/}
   void setCoefEz(const Field3D &val) { Ez = val; issetE = true; /*coefchanged = true;*/}
-<<<<<<< Updated upstream:src/invert/laplace/impls/petsc/petsc_laplace.hxx
   
   const FieldPerp solve(const FieldPerp &b);
   const FieldPerp solve(const FieldPerp &b, const FieldPerp &x0);
@@ -129,6 +128,7 @@ private:
   BoutReal rtol, atol, dtol;
   int maxits; // Maximum number of iterations in solver.
   bool direct; //Use direct LU solver if true.
+  string method; //Call other methods built in petsc
   bool fourth_order;
 
   PetscLib lib;

@@ -1,0 +1,29 @@
+When running elm-pb with default options, on hopper.nersc.gov, 
+for 30 min debug job, by using the following commend 
+>qsub bout_hopper_debug.pbs
+the result for linear growth rate is shown in plots:
+plot Elm_n15_pb_lineargrowthrate_diam_S8hyperRm4.ps and
+Elm_n15_pb_lineargrowthrate_diam_S8hyperRm4.pdf.
+
+IDL>  p = collect(path="data", var="P")
+IDL> moment_xyzt, p, rms=rms
+IDL> plot, deriv(alog(rms[317,32,*]))
+IDL> 
+
+For low resolution mesh nx=68, data/cbm18_dens8.grid_nx68ny64.nc, 
+the growth rate is 0.275002 *Alfven time.
+
+For high resolution mesh nx=516, data/cbm18_8_y064_x516_090309.nc
+the growth rate is 0.186655 *Alfven time.
+
+The diference is 47%.
+
+The high resolution case should give growth-rate of 0.1867 in BOUT++
+units, but this needs to be corrected to get the values which were
+compared against ELITE. This is because the value of R/B used to get the
+Alfven timescale is different between BOUT++ and ELITE: R/B = 1.804 for
+BOUT++, and R/B=1.5 for ELITE. Growth-rates from BOUT++ therefore need
+to be multiplied by 0.83 for comparison published in Plasma Physics 
+and Controlled Fusion 53 (2011) 054005 by B D Dudson, X Q Xu, M V Umansky, 
+H R Wilson and P B Snyder.
+

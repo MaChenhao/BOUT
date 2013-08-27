@@ -1,4 +1,3 @@
-<<<<<<< Updated upstream:src/invert/laplace/impls/petsc/petsc_laplace.hxx
 /**************************************************************************
  * Perpendicular Laplacian inversion. 
  *                           Using PETSc Solvers

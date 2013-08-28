@@ -25,6 +25,7 @@
  **************************************************************************/
 #include "mumps_laplace.hxx"
 
+
 #ifdef BOUT_HAS_MUMPS
 
 // #include "mpi.h"
@@ -916,4 +917,3 @@ void LaplaceMumps::Coeffs( int x, int y, int z, BoutReal &coef1, BoutReal &coef2
 }
 
 #endif // BOUT_HAS_MUMPS
-

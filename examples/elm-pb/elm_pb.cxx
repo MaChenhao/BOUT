@@ -219,14 +219,7 @@ const BoutReal Mi = 2.0*1.6726e-27; // Ion mass
 // Communication objects
 FieldGroup comms;
 
-<<<<<<< Updated upstream:examples/elm-pb/elm_pb.cxx
 int precon(BoutReal t, BoutReal cj, BoutReal delta); // Preconditioner
-=======
-class Laplacian *lap; 
-
-int precon(BoutReal t, BoutReal cj, BoutReal delta);
-
->>>>>>> Stashed changes:examples/elm-pb/elm_pb.cxx
 int jacobian(BoutReal t); // Jacobian-vector multiply
 
 int precon_phi(BoutReal t, BoutReal cj, BoutReal delta); // Preconditioner with phi constraint
@@ -1060,19 +1053,11 @@ int physics_init(bool restarting)
   SAVE_ONCE2(J0, P0);
   SAVE_ONCE4(density, Lbar, Bbar, Tbar);
   SAVE_ONCE2(Va, B0);
-<<<<<<< Updated upstream:examples/elm-pb/elm_pb.cxx
   SAVE_ONCE2(Dphi0, U0); 
   SAVE_ONCE(V0);  
   if (!constn0)
     SAVE_ONCE3(Ti0, Te0, N0);     
   
-=======
-
-  // Create Laplacian solver
-  lap = Laplacian::create();
-  //lap->setFlags(phi_flags);
-
->>>>>>> Stashed changes:examples/elm-pb/elm_pb.cxx
   /////////////// CHECK VACUUM ///////////////////////
   // In vacuum region, initial vorticity should equal zero
   
@@ -1085,7 +1070,6 @@ int physics_init(bool restarting)
     // Set U to zero where P0 < vacuum_pressure
     U = where(P0 - vacuum_pressure, U, 0.0);
 
-<<<<<<< Updated upstream:examples/elm-pb/elm_pb.cxx
     if (constn0)
       {
 	ubyn = U;
@@ -1099,11 +1083,6 @@ int physics_init(bool restarting)
 	//dump.add(sourp, "sourp", 1);
 	phi = invert_laplace(ubyn, phi_flags, NULL, &N0, NULL);
       }
-=======
-    // Phi should be consistent with U
-    //phi = invert_laplace(U, phi_flags, NULL);
-    phi = lap->solve(U);
->>>>>>> Stashed changes:examples/elm-pb/elm_pb.cxx
     
     //if(diamag) {
     //phi -= 0.5*dnorm * P / B0;
@@ -1290,18 +1269,8 @@ int physics_run(BoutReal t)
 	    //mesh->communicate(sourp);
 	  }
     // Invert laplacian for phi
-<<<<<<< Updated upstream:examples/elm-pb/elm_pb.cxx
 	phi = invert_laplace(ubyn, phi_flags, NULL, &N0, NULL);
       }
-=======
-    //phi = invert_laplace(U, phi_flags, NULL);
-    phi = lap->solve(U);
-    
-    if(diamag) {
-      phi -= 0.5*dnorm * P / B0;
-    }
-    
->>>>>>> Stashed changes:examples/elm-pb/elm_pb.cxx
     // Apply a boundary condition on phi for target plates
     //phi.applyBoundary();
     mesh->communicate(phi); 

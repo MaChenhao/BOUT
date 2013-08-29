@@ -126,6 +126,7 @@ nonlinear  = false     # include non-linear terms?
 diamag = true          # Include diamagnetic effects?
 diamag_grad_t = false  # Include Grad_par(Te) term in Psi equation
 diamag_phi0 = true     # Balance ExB against Vd for stationary equilibrium
+withni = false         # With perturbed ni in field solver
 
 compress0 = true       # open the ion velocity equation
 continuity = true      # use continuity eqution

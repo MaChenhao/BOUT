@@ -145,7 +145,7 @@ int bracket_method_exb, bracket_method_mag;
 
 bool diamag;
 bool energy_flux, energy_exch; // energy flux term
-bool diamag_phi0;   // Include the diamagnetic equilibrium phi0
+bool diamag_phi0, withni;   // Include the diamagnetic equilibrium phi0
 bool thermal_force;  // Include the thermal flux term in Ohm's law
 bool eHall;
 BoutReal AA; // ion mass in units of the proton mass; AA=Mi/Mp
@@ -544,6 +544,7 @@ int physics_init(bool restarting)
   OPTION(options, energy_exch,       false);  // energy exchange
   OPTION(options, diamag_phi0,       diamag); // Include equilibrium phi0
   OPTION(options, dia_fact,          1.0);    // Scale diamagnetic effects by this factor
+  OPTION(options, withni,            false);  // With perturbed Ni in solving phi
 
   OPTION(options, noshear,           false);
 
@@ -1467,7 +1468,7 @@ int physics_run(BoutReal t)
 
   //  Field2D lap_temp=0.0;
   Field3D logn0;
-  if(nonlinear)
+  if(nonlinear && withni)
      logn0 = laplace_alpha * N_tmp;
   else
      logn0 = laplace_alpha * N0;

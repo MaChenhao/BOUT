@@ -22,10 +22,11 @@ dx = 0.1
 dy = 1.
 
 [solver1]  # Options for the first Laplacian solver
+type = tri
 flags = 0
 
 [solver2] # Options for the second Laplacian solver
-type = mumps
+type = petsc
 flags = 0
 pctype = user      # Use another solver as preconditioner
 rightprec = true   # Switch right or left preconditioning

@@ -20,10 +20,10 @@ second=C4
 [petsc2nd]
 type=petsc
 all_terms=true
-pctype=none
+nonuniform=true
 rtol=1.e-10
 include_yguards=false
-maxits=10000
+maxits=1000
 
 gmres_max_steps = 300
 
@@ -42,11 +42,10 @@ flags      = 49152 # Identity in boundary
 [petsc4th]
 type=petsc
 all_terms=true
-pctype=none
 nonuniform=true
 rtol=1.e-10
 include_yguards=false
-maxits=10000
+maxits=1000
 fourth_order=true
 
 gmres_max_steps = 30

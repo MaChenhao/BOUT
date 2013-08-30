@@ -1110,6 +1110,7 @@ int physics_init(bool restarting)
 //  comms.add(phi);
 
   phi.setBoundary("phi"); // Set boundary conditions
+  lapphi.setBoundary("phi");
   tmpU2.setBoundary("U");
   tmpP2.setBoundary("P");
   tmpA2.setBoundary("J");
@@ -1263,7 +1264,7 @@ int physics_run(BoutReal t)
       {
 	 ////phi = invert_laplace(U, phi_flags, NULL);
    phi = lap->solve(U);
-   //lapphi = Laplace_perp(phi);
+   lapphi = Delp2(phi);
 	
 	if(diamag) {
 	  phi -= 0.5*dnorm * P / B0;

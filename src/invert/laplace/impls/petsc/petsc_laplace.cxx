@@ -986,8 +986,7 @@ void LaplacePetsc::fieldToVec(const FieldPerp &f, Vec bs) {
     }
   }
   ASSERT1(i == Iend);
-
-  // Assemble vector
+  
   VecAssemblyBegin(bs);
   VecAssemblyEnd(bs);
 }
